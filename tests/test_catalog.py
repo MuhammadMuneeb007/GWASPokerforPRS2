@@ -478,3 +478,204 @@ def test_assessment_serialises() -> None:
     assert payload["availability"] == "available"
     assert payload["ssf_metadata"]["ssf_status"] == "GWAS-SSF"
     json.dumps(payload)  # must be JSON-serialisable
+
+
+# ----------------------------------------------------------------------
+# Search: file / API / harmonised / GWAS-SSF availability
+# ----------------------------------------------------------------------
+
+FTP = "https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics"
+STUDY_DIR = f"{FTP}/GCST90000001-GCST90001000/GCST90000001/"
+
+
+def _search_result(**study_kwargs):
+    from gwaspoker.catalog.discovery import SearchResult
+    from gwaspoker.catalog.models import Study
+
+    defaults = {"study_accession": "GCST90000001", "summary_statistics_available": True}
+    defaults.update(study_kwargs)
+    return SearchResult(study=Study(**defaults))
+
+
+@pytest.fixture
+def service(config):
+    from gwaspoker.catalog.discovery import DiscoveryService
+
+    svc = DiscoveryService(config)
+    yield svc
+    svc.close()
+
+
+@responses.activate
+def test_file_check_populates_all_four_columns(service, fixture_text) -> None:
+    """The happy path: file present, sidecar readable, harmonised published."""
+    responses.add(responses.GET, STUDY_DIR, body=fixture_text("ftp_index.html"), status=200)
+    responses.add(
+        responses.GET,
+        f"{STUDY_DIR}harmonised/",
+        body=fixture_text("ftp_index_harmonised.html"),
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        f"{STUDY_DIR}harmonised/12345678-GCST90000001-EFO_0000001.h.tsv.gz-meta.yaml",
+        body=fixture_text("ssf_meta.yaml"),
+        status=200,
+    )
+
+    result = _search_result()
+    service._check_file_availability(result)
+
+    assert result.file_available is True
+    assert result.api_available is True
+    assert result.harmonised_available is True
+    assert result.ssf_status == "GWAS-SSF"
+    assert result.is_ssf is True
+
+
+@responses.activate
+def test_pre_ssf_file_reports_ssf_false(service, fixture_text) -> None:
+    """A pre-GWAS-SSF sidecar still gives API=yes, but GWAS-SSF=no."""
+    responses.add(responses.GET, STUDY_DIR, body=fixture_text("ftp_index.html"), status=200)
+    responses.add(responses.GET, f"{STUDY_DIR}harmonised/", status=404)
+    responses.add(
+        responses.GET,
+        f"{STUDY_DIR}GCST90000001_buildGRCh37.tsv-meta.yaml",
+        body=fixture_text("pre_ssf_meta.yaml"),
+        status=200,
+    )
+
+    result = _search_result()
+    service._check_file_availability(result)
+
+    assert result.file_available is True
+    assert result.api_available is True
+    assert result.harmonised_available is False
+    assert result.ssf_status == "pre-GWAS-SSF"
+    assert result.is_ssf is False
+
+
+@responses.activate
+def test_missing_sidecar_gives_api_false_and_ssf_unknown(service) -> None:
+    """No sidecar: the structured route cannot answer, and SSF status is '?'.
+
+    ``api_available`` is False (we looked, it was not there) while ``ssf_status``
+    stays None (we could not establish it) -- a distinction the table renders as
+    ``no`` versus ``?``.
+    """
+    index = (
+        '<table><tr><td><a href="GCST90000001.tsv.gz">GCST90000001.tsv.gz</a></td>'
+        "<td>2025-01-01</td><td>500M</td></tr></table>"
+    )
+    responses.add(responses.GET, STUDY_DIR, body=index, status=200)
+    responses.add(responses.GET, f"{STUDY_DIR}harmonised/", status=404)
+
+    result = _search_result()
+    service._check_file_availability(result)
+
+    assert result.file_available is True
+    assert result.api_available is False
+    assert result.ssf_status is None
+    assert result.is_ssf is None
+
+
+def test_study_without_summary_statistics_costs_no_requests(service) -> None:
+    """A top-associations-only study has no directory, so nothing is fetched.
+
+    ``responses`` is not activated here: any HTTP call would raise.
+    """
+    result = _search_result(summary_statistics_available=False)
+    service._check_file_availability(result)
+
+    assert result.file_available is False
+    assert result.api_available is False
+    assert result.harmonised_available is False
+    assert result.ssf_status is None
+
+
+@responses.activate
+def test_unlistable_directory_is_recorded_not_raised(service) -> None:
+    """A study the Catalog says has a file, but whose directory 404s."""
+    responses.add(responses.GET, STUDY_DIR, status=404)
+
+    result = _search_result()
+    service._check_file_availability(result)
+
+    assert result.file_available is False
+    assert result.file_check_error
+    assert result.api_available is None  # never established, not "absent"
+
+    from gwaspoker.failures import FAILURES
+
+    assert len(FAILURES) == 1
+
+
+@responses.activate
+def test_sidecar_improves_sample_counts(service, fixture_text) -> None:
+    """The sidecar is fetched anyway, so let it supply authoritative counts."""
+    from gwaspoker.catalog.models import ValueSource
+
+    responses.add(responses.GET, STUDY_DIR, body=fixture_text("ftp_index.html"), status=200)
+    responses.add(responses.GET, f"{STUDY_DIR}harmonised/", status=404)
+    responses.add(
+        responses.GET,
+        f"{STUDY_DIR}GCST90000001_buildGRCh37.tsv-meta.yaml",
+        body=fixture_text("ssf_meta.yaml"),
+        status=200,
+    )
+
+    result = _search_result()
+    service._check_file_availability(result)
+
+    samples = result.study.samples
+    assert samples.total == 123456
+    assert samples.cases == 12345
+    assert samples.total_source is ValueSource.SSF_METADATA
+    assert result.study.genome_build == "GRCh38"
+
+
+def test_search_result_serialises_the_new_fields() -> None:
+    result = _search_result()
+    result.file_available = True
+    result.api_available = False
+    result.harmonised_available = True
+    result.ssf_status = "pre-GWAS-SSF"
+
+    payload = result.to_dict()
+    assert payload["file_available"] is True
+    assert payload["api_available"] is False
+    assert payload["harmonised_available"] is True
+    assert payload["ssf_status"] == "pre-GWAS-SSF"
+    json.dumps(payload, default=str)
+
+
+def test_ssf_status_preserves_the_declared_string() -> None:
+    """The Catalog uses at least two non-conformant values; they are distinct.
+
+    ``pre-GWAS-SSF`` means the file predates the standard. ``non-GWAS-SSF``
+    means it is not variant-level summary statistics at all -- GCST90081731
+    (gene-based burden) declares exactly that. Collapsing the second into the
+    first would misreport it and blur a benchmark stratum.
+    """
+    assert SsfMetadata(url="", file_type="GWAS-SSF v1.0").ssf_status == "GWAS-SSF"
+    assert SsfMetadata(url="", file_type="pre-GWAS-SSF").ssf_status == "pre-GWAS-SSF"
+    assert SsfMetadata(url="", file_type="non-GWAS-SSF").ssf_status == "non-GWAS-SSF"
+    assert SsfMetadata(url="", file_type=None).ssf_status == "unknown"
+
+
+def test_only_gwas_ssf_declaration_counts_as_conformant() -> None:
+    assert SsfMetadata(url="", file_type="GWAS-SSF v1.0").is_ssf
+    assert not SsfMetadata(url="", file_type="non-GWAS-SSF").is_ssf
+    assert not SsfMetadata(url="", file_type="pre-GWAS-SSF").is_ssf
+
+
+def test_non_ssf_declaration_is_not_sufficient(service, fixture_text) -> None:
+    """A non-GWAS-SSF file must still be probed, exactly like a pre-SSF one."""
+    from gwaspoker.catalog.sumstats_api import parse_ssf_metadata
+
+    text = fixture_text("pre_ssf_meta.yaml").replace(
+        "file_type: pre-GWAS-SSF", "file_type: non-GWAS-SSF"
+    )
+    meta = parse_ssf_metadata(text)
+    assert meta.ssf_status == "non-GWAS-SSF"
+    assert not meta.is_ssf

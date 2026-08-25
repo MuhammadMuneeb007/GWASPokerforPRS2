@@ -287,10 +287,22 @@ class SsfMetadata:
 
     @property
     def ssf_status(self) -> str:
-        """``GWAS-SSF`` / ``pre-GWAS-SSF`` / :data:`UNKNOWN` for stratification."""
+        """Declared conformance, for benchmark stratification.
+
+        ``GWAS-SSF`` when the file declares any GWAS-SSF version, otherwise the
+        declared string itself, otherwise :data:`UNKNOWN`.
+
+        The declared string is preserved rather than collapsed to a single
+        "not conformant" bucket, because the Catalog uses at least two distinct
+        values: ``pre-GWAS-SSF`` for files that predate the standard, and
+        ``non-GWAS-SSF`` for files that are not variant-level summary statistics
+        at all (gene-based burden results, for instance). Reporting the second
+        as the first would be wrong, and would blur a stratum the benchmark
+        cares about.
+        """
         if not self.file_type:
             return UNKNOWN
-        return "GWAS-SSF" if self.is_ssf else "pre-GWAS-SSF"
+        return "GWAS-SSF" if self.is_ssf else self.file_type.strip()
 
     def to_dict(self) -> dict[str, Any]:
         return {

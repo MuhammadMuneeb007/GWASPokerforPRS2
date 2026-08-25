@@ -78,8 +78,16 @@ class HttpClient:
     def __init__(self, config: Optional[GWASPokerConfig] = None) -> None:
         self.config = config or get_config()
         self._limiter = _RateLimiter(self.config.max_requests_per_second)
-        self._session = requests.Session()
-        self._session.headers.update(
+        # `requests.Session` is not documented as thread-safe, so each thread
+        # gets its own. The rate limiter is deliberately shared: the point of a
+        # limiter is that it bounds the whole process, not one worker.
+        self._local = threading.local()
+        self._sessions: list[requests.Session] = []
+        self._sessions_lock = threading.Lock()
+
+    def _build_session(self) -> requests.Session:
+        session = requests.Session()
+        session.headers.update(
             {"User-Agent": self.config.user_agent, "Accept-Encoding": "identity"}
         )
         # Retry only on transient statuses. 404 and 410 are answers, not failures
@@ -92,14 +100,31 @@ class HttpClient:
             allowed_methods=frozenset({"GET", "HEAD"}),
             raise_on_status=False,
         )
-        adapter = HTTPAdapter(max_retries=retry, pool_maxsize=8)
-        self._session.mount("https://", adapter)
-        self._session.mount("http://", adapter)
+        adapter = HTTPAdapter(max_retries=retry, pool_maxsize=self.config.max_workers + 2)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
+    @property
+    def _session(self) -> requests.Session:
+        """The calling thread's session, created on first use."""
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = self._build_session()
+            self._local.session = session
+            with self._sessions_lock:
+                self._sessions.append(session)
+        return session
 
     # -- lifecycle -------------------------------------------------------
 
     def close(self) -> None:
-        self._session.close()
+        """Close every session this client handed out, from any thread."""
+        with self._sessions_lock:
+            sessions, self._sessions = self._sessions, []
+        for session in sessions:
+            session.close()
+        self._local = threading.local()
 
     def __enter__(self) -> HttpClient:
         return self

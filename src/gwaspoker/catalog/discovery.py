@@ -24,7 +24,10 @@ which is what makes the two routes comparable in the benchmark.
 from __future__ import annotations
 
 import logging
+import threading
 import time
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -56,29 +59,63 @@ from gwaspoker.readiness.prs import assess_from_declared_fields, assess_from_map
 
 logger = logging.getLogger(__name__)
 
+#: Failure categories that justify recording a definite ``False`` rather than
+#: leaving a field unknown. Everything else -- timeouts, 5xx, connection
+#: resets -- means "we did not find out", and must not become a negative
+#: measurement in the output.
+_DEFINITE_ABSENCE = frozenset(
+    {
+        FailureCategory.FILE_NOT_FOUND,
+        FailureCategory.HTTP_404,
+        FailureCategory.NOT_REPRESENTED,
+    }
+)
+
+
+def _matches_any(text: Optional[str], patterns: Sequence[str]) -> bool:
+    """Case-insensitive substring match against any pattern."""
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(p.strip().lower() in lowered for p in patterns if p.strip())
+
 
 @dataclass
 class SearchResult:
     """A study returned by a search, with what is known about its files.
 
-    The four availability fields answer, at a glance, how much work getting PRS
+    The availability fields answer, at a glance, how much work getting PRS
     weights out of this study will be:
 
     ``file_available``
-        A summary-statistics data file exists on the FTP site.
-    ``api_available``
-        The GWAS-SSF ``-meta.yaml`` sidecar is retrievable, so GWASPoker's
-        structured route can describe the file without reading it. This is what
-        predicts whether ``assess`` will need to probe.
+        A summary-statistics data file exists in the study's repository
+        directory.
+    ``metadata_available``
+        The GWAS-SSF ``-meta.yaml`` sidecar is retrievable. This is a **static
+        metadata file served over HTTP, not an API** -- the GWAS Catalog's
+        Summary Statistics API is withdrawn, and the replacement for the
+        full-summary-statistics collection is still being redeveloped.
+        Retrievable metadata does **not** on its own mean a probe is
+        unnecessary; see ``probe_needed``.
     ``harmonised_available``
         A ``harmonised/`` product is published alongside the raw submission.
     ``ssf_status``
-        ``GWAS-SSF`` when the file declares conformance to the standard (and so
-        has a guaranteed mandatory column set), ``pre-GWAS-SSF`` when it does
-        not, ``None`` when it could not be established.
+        The declared ``file_type``: ``GWAS-SSF`` when the file declares
+        conformance to the standard, otherwise the declared string
+        (``pre-GWAS-SSF``, ``non-GWAS-SSF``), or ``None`` when unestablished.
+    ``prs_from_metadata``
+        The PRS verdict derivable from the declaration alone. Only a GWAS-SSF
+        declaration fixes the mandatory column set, so this is ``READY``
+        exactly when ``ssf_status == "GWAS-SSF"`` and ``None`` otherwise.
+    ``probe_needed``
+        Whether bytes must be read from the data file to reach a verdict.
+        ``False`` only when the declaration already settles it.
 
-    Each is ``None`` rather than ``False`` when it could not be determined --
-    "not checked" and "checked and absent" are different facts.
+    Every field is ``None`` rather than ``False`` when it could not be
+    determined. A network timeout must never be recorded as "checked, absent" --
+    these columns are intended for a manuscript dataset, and the difference
+    between "no" and "unknown" is the difference between a measurement and a
+    guess.
     """
 
     study: Study
@@ -86,11 +123,12 @@ class SearchResult:
     matched_traits: tuple[str, ...] = ()
 
     file_available: Optional[bool] = None
-    api_available: Optional[bool] = None
+    metadata_available: Optional[bool] = None
     harmonised_available: Optional[bool] = None
     ssf_status: Optional[str] = None
     resolved_file: Optional[ResolvedFile] = None
     file_check_error: Optional[str] = None
+    file_check_category: Optional[str] = None
 
     @property
     def is_ssf(self) -> Optional[bool]:
@@ -98,6 +136,30 @@ class SearchResult:
         if self.ssf_status is None:
             return None
         return self.ssf_status == "GWAS-SSF"
+
+    @property
+    def prs_from_metadata(self) -> Optional[str]:
+        """PRS verdict derivable from the declaration alone.
+
+        A GWAS-SSF v1.0 declaration fixes the mandatory columns
+        (``chromosome``, ``base_pair_location``, ``effect_allele``,
+        ``other_allele``, an effect measure, ``standard_error``,
+        ``effect_allele_frequency``, ``p_value``), which satisfies every
+        required PRS field. No other declaration guarantees anything, so this
+        is ``READY`` exactly when the file declares GWAS-SSF.
+        """
+        return "READY" if self.is_ssf else None
+
+    @property
+    def probe_needed(self) -> Optional[bool]:
+        """Must bytes be read from the data file to reach a PRS verdict?
+
+        ``None`` means the question does not arise or could not be settled:
+        there is no file, or the checks did not complete.
+        """
+        if self.file_available is not True:
+            return None
+        return not self.is_ssf
 
     def to_dict(self) -> dict[str, Any]:
         data = self.study.to_dict()
@@ -108,11 +170,14 @@ class SearchResult:
         data.update(
             {
                 "file_available": self.file_available,
-                "api_available": self.api_available,
+                "metadata_available": self.metadata_available,
                 "harmonised_available": self.harmonised_available,
                 "ssf_status": self.ssf_status,
+                "prs_from_metadata": self.prs_from_metadata,
+                "probe_needed": self.probe_needed,
                 "resolved_file": self.resolved_file.to_dict() if self.resolved_file else None,
                 "file_check_error": self.file_check_error,
+                "file_check_category": self.file_check_category,
             }
         )
         return data
@@ -183,6 +248,9 @@ class DiscoveryService:
         self.resolver = SummaryStatisticsResolver(self.config, self.http)
         self.prober = RemoteProber(self.config, self.http)
         self.samples = SampleSizeResolver(enable_llm=enable_llm, llm_model=self.config.llm_model)
+        #: How many studies the last :meth:`search` dropped via ``exclude``.
+        #: Reported to the user so a filter never removes results silently.
+        self.last_excluded: int = 0
 
     def close(self) -> None:
         self.http.close()
@@ -205,22 +273,24 @@ class DiscoveryService:
         limit: int = 25,
         summary_stats_only: bool = False,
         resolve_samples: bool = True,
-        check_files: bool = True,
-        progress: Optional[Callable[[int, int, str], None]] = None,
+        exclude: Sequence[str] = (),
     ) -> list[SearchResult]:
-        """Find studies for a phenotype.
+        """Find studies for a phenotype. **Metadata only -- no file checks.**
 
         The trait is resolved through the Catalog's own ontology index first, so
         results are driven by EFO annotation rather than by string similarity.
         Free-text study hits supplement that, catching studies whose *reported*
         trait matches even where the EFO mapping is broader.
 
-        With ``check_files`` (the default) each returned study is also inspected
-        on the FTP site to fill ``file_available``, ``api_available``,
-        ``harmonised_available`` and ``ssf_status``. That costs one directory
-        listing plus one sidecar fetch per study -- roughly a second each -- so
-        it is done **after** filtering and truncation, on the ``limit`` studies
-        that will actually be shown rather than on everything retrieved.
+        File availability is deliberately *not* done here: it is a separate,
+        much more expensive stage. Call :meth:`check_files` on the returned list
+        when you want the File / SSF Meta / Harmonised / GWAS-SSF columns. Keeping
+        the two apart is what lets a caller show "retrieving studies" and
+        "checking N files" as distinct phases with honest progress.
+
+        ``exclude`` drops studies whose reported trait contains any of the given
+        substrings, case-insensitively. The count dropped is returned to the
+        caller through :attr:`last_excluded` so nothing disappears silently.
         """
         traits = self.catalog.search_traits(trait, limit=8)
         if traits:
@@ -258,6 +328,13 @@ class DiscoveryService:
             for result in results:
                 self.samples.resolve(result.study)
 
+        if exclude:
+            kept = [r for r in results if not _matches_any(r.study.reported_trait, exclude)]
+            self.last_excluded = len(results) - len(kept)
+            results = kept
+        else:
+            self.last_excluded = 0
+
         if population:
             results = [r for r in results if r.ancestry_match and r.ancestry_match.score > 0]
 
@@ -269,23 +346,80 @@ class DiscoveryService:
             ),
             reverse=True,
         )
-        results = results[:limit]
+        return results[:limit]
 
-        if check_files:
-            for index, result in enumerate(results, start=1):
-                if progress is not None:
-                    progress(index, len(results), result.study.study_accession)
+    # ------------------------------------------------------------------
+    # file availability -- the expensive stage
+    # ------------------------------------------------------------------
+
+    def check_files(
+        self,
+        results: Sequence[SearchResult],
+        *,
+        workers: Optional[int] = None,
+        progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> list[SearchResult]:
+        """Fill the file-availability fields for already-retrieved studies.
+
+        Each study costs a directory listing, often a second listing for
+        ``harmonised/``, and a metadata sidecar fetch -- so **two or three
+        requests**, not two. Done sequentially that is roughly a second per
+        study, which is why this runs on a thread pool.
+
+        Concurrency does not bypass the rate limit: every worker goes through
+        the same process-wide limiter in :class:`~gwaspoker.http.HttpClient`, so
+        ``workers`` controls how much latency is overlapped, not how many
+        requests per second are issued.
+        """
+        results = list(results)
+        if not results:
+            return results
+
+        worker_count = max(1, min(workers or self.config.max_workers, len(results)))
+        completed = 0
+        lock = threading.Lock()
+
+        def run(result: SearchResult) -> None:
+            nonlocal completed
+            try:
                 self._check_file_availability(result)
+            finally:
+                with lock:
+                    completed += 1
+                    if progress is not None:
+                        progress(completed, len(results), result.study.study_accession)
 
+        if worker_count == 1:
+            for result in results:
+                run(result)
+            return results
+
+        logger.info(
+            "Checking %d published file(s) with %d workers (rate limit %.1f req/s)",
+            len(results),
+            worker_count,
+            self.config.max_requests_per_second,
+        )
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            futures = [pool.submit(run, result) for result in results]
+            for future in as_completed(futures):
+                # run() never raises, but surface a programming error rather
+                # than silently dropping it.
+                future.result()
         return results
 
     def _check_file_availability(self, result: SearchResult) -> None:
         """Fill the availability fields for one study.
 
-        Costs one FTP directory listing plus, when a sidecar exists, one small
-        metadata fetch. Failures are recorded on the result and never raised:
-        a study whose files cannot be listed still belongs in the table, marked
-        as such.
+        Failures are recorded on the result and never raised: a study whose
+        files cannot be listed still belongs in the table, marked as such.
+
+        The distinction that matters is **absent versus unknown**. A 404 means
+        the directory or the file genuinely is not there, and ``False`` is the
+        right answer. A timeout or a 5xx means we did not find out, and the
+        field stays ``None``. These columns are intended for a manuscript
+        dataset; recording a transient network failure as "no file" would put a
+        fabricated negative into it.
         """
         study = result.study
         accession = study.study_accession
@@ -294,7 +428,7 @@ class DiscoveryService:
             # The Catalog says this study publishes only top associations.
             # There is no directory to list, so nothing further is unknown.
             result.file_available = False
-            result.api_available = False
+            result.metadata_available = False
             result.harmonised_available = False
             return
 
@@ -304,10 +438,15 @@ class DiscoveryService:
                 harmonised="auto",
                 location_hint=study.summary_statistics_location,
             )
-        except (FileResolutionError, GWASPokerError) as exc:
-            result.file_available = False
+        except GWASPokerError as exc:
+            record = FAILURES.record_exception("search_file_check", exc, study=accession)
             result.file_check_error = str(exc)
-            FAILURES.record_exception("search_file_check", exc, study=accession)
+            result.file_check_category = record.category.value
+            # Only a definite "not there" answer justifies False.
+            if record.category in _DEFINITE_ABSENCE:
+                result.file_available = False
+                result.metadata_available = False
+                result.harmonised_available = False
             return
 
         result.resolved_file = resolved
@@ -317,17 +456,21 @@ class DiscoveryService:
             study.summary_statistics_location = resolved.directory_url
 
         if not resolved.metadata_url:
-            # No GWAS-SSF sidecar: the structured route cannot describe this
-            # file, so `assess` will have to probe it.
-            result.api_available = False
+            # The directory listed cleanly and contains no sidecar: a definite
+            # absence, so False rather than None.
+            result.metadata_available = False
             return
 
         meta = self.sumstats.fetch_ssf_metadata(resolved.metadata_url)
         if meta is None:
-            result.api_available = False
+            # The sidecar was listed but could not be fetched or parsed. We do
+            # not know whether it describes a conformant file.
+            result.metadata_available = None
+            result.file_check_error = f"sidecar listed but unreadable: {resolved.metadata_url}"
+            result.file_check_category = FailureCategory.METADATA_MISSING.value
             return
 
-        result.api_available = True
+        result.metadata_available = True
         result.ssf_status = meta.ssf_status
         if meta.genome_assembly and not study.genome_build:
             study.genome_build = meta.genome_assembly

@@ -29,9 +29,12 @@ SEARCH_COLUMNS: tuple[str, ...] = (
     "controls",
     "controls_source",
     "file_available",
-    "api_available",
+    "metadata_available",
     "harmonised_available",
     "ssf_status",
+    "prs_from_metadata",
+    "probe_needed",
+    "file_check_category",
     "summary_statistics_available",
     "summary_statistics_location",
     "resolved_file_name",
@@ -110,8 +113,12 @@ def _write(rows: list[dict[str, Any]], columns: tuple[str, ...], path: Path) -> 
     return path
 
 
-def write_search_csv(results: Iterable[Any], path: Path) -> Path:
-    """Write ``search_results.csv``."""
+def search_rows(results: Iterable[Any]) -> list[dict[str, Any]]:
+    """Build the ``search_results.csv`` rows without writing anything.
+
+    Split out from :func:`write_search_csv` so the CLI can render CSV to stdout
+    without a temporary file.
+    """
     rows: list[dict[str, Any]] = []
     for result in results:
         study = result.study
@@ -132,9 +139,12 @@ def write_search_csv(results: Iterable[Any], path: Path) -> Path:
                 "controls": samples.controls,
                 "controls_source": samples.controls_source.value,
                 "file_available": result.file_available,
-                "api_available": result.api_available,
+                "metadata_available": result.metadata_available,
                 "harmonised_available": result.harmonised_available,
                 "ssf_status": result.ssf_status,
+                "prs_from_metadata": result.prs_from_metadata,
+                "probe_needed": result.probe_needed,
+                "file_check_category": result.file_check_category,
                 "summary_statistics_available": study.summary_statistics_available,
                 "summary_statistics_location": study.summary_statistics_location,
                 "resolved_file_name": (result.resolved_file.name if result.resolved_file else None),
@@ -156,7 +166,23 @@ def write_search_csv(results: Iterable[Any], path: Path) -> Path:
                 ),
             }
         )
-    return _write(rows, SEARCH_COLUMNS, path)
+    return rows
+
+
+def write_search_csv(results: Iterable[Any], path: Path) -> Path:
+    """Write ``search_results.csv``."""
+    return _write(search_rows(results), SEARCH_COLUMNS, path)
+
+
+def render_search_csv(results: Iterable[Any]) -> str:
+    """Render ``search_results.csv`` content as a string."""
+    import io
+
+    import pandas as pd
+
+    buffer = io.StringIO()
+    pd.DataFrame(search_rows(results), columns=list(SEARCH_COLUMNS)).to_csv(buffer, index=False)
+    return buffer.getvalue()
 
 
 def write_assessment_csv(results: Iterable[Any], path: Path) -> Path:

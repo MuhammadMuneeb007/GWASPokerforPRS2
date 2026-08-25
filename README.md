@@ -156,11 +156,43 @@ gwaspoker search --trait "coronary artery disease" --limit 50
 
 ```text
 GWAS Catalog studies for migraine in European
-GCST          Trait                           Population         N   Cases  Controls  Sum stats  Year      PMID
-GCST90271641  Migraine                        European     513,266  26,052   487,214     yes     2023  37415806
-GCST90043745  Migraine (PheCode 340)          European     456,348   1,488   454,860     yes     2021  34737426
-GCST90475837  Migraine (PheCode 340)          European     437,667  31,836   405,831     yes     2024  39024449
-GCST90079826  ICD10 G43.9: Migraine, unspec.  European     387,898   3,383   384,515     yes     2021  34662886
+GCST          Trait                          Population        N   Cases  Controls  File  API  Harmonised  GWAS-SSF  Year      PMID
+GCST90473326  ICD10 G43: Migraine            European    458,440  25,393   433,047  yes   yes     yes        yes     2025  40770095
+GCST90083812  ICD10 G43.9: Migraine,         European    387,898   3,383   384,515  yes   yes      no         no     2021  34662886
+              unspecified (Gene-based
+              burden)
+GCST90079826  ICD10 G43.9: Migraine,         European    387,898   3,383   384,515  yes   yes     yes         no     2021  34662886
+              unspecified
+GCST90079827  ICD10 G43: Migraine            European    378,172   8,426   369,746  yes   yes     yes         no     2021  34662886
+GCST90671940  Migraine                       European    341,050  10,881   330,169  yes   yes      no        yes     2022  35115687
+GCST90081731  Migraine (Gene-based burden)   European    331,754  14,131   317,623  yes   yes      no         no     2021  34662886
+```
+
+Four columns say what it will take to actually use each study:
+
+| Column | Means |
+| --- | --- |
+| **File** | A summary-statistics data file is published |
+| **API** | The GWAS-SSF `-meta.yaml` sidecar is retrievable, so the structured route can describe the file and `assess` needs **no probe** |
+| **Harmonised** | A `harmonised/` product is published alongside the raw submission |
+| **GWAS-SSF** | The file declares conformance to GWAS-SSF v1.0, so its mandatory column set is guaranteed |
+
+Each is `yes`, `no`, or `?` when the fact could not be established. `?` is never
+rendered as a blank — a blank cell reads as "no" to most people, and the two are
+different facts.
+
+Reading the table above: `GCST90473326` is the best candidate — it has a file, a
+readable sidecar, a harmonised product, *and* declares GWAS-SSF, so `assess` will
+return a verdict without transferring any data. The `(Gene-based burden)` studies
+have no harmonised product, so they will need liftover if your genotypes are on a
+different build.
+
+These four columns cost one FTP directory listing plus one sidecar fetch per
+study — about a second each. Pass `--no-check-files` to skip them (they show `?`)
+when you only want the trait and sample counts:
+
+```bash
+gwaspoker search --trait migraine --no-check-files    # returns immediately
 ```
 
 Trait resolution goes through the GWAS Catalog's own ontology index, so results

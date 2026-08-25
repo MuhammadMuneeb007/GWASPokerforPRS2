@@ -84,6 +84,22 @@ def _count(value: Optional[int]) -> str:
     return f"{value:,}"
 
 
+def _tristate_cell(value: Optional[bool], *, label: Optional[str] = None) -> str:
+    """yes / no / ? for the availability columns.
+
+    ``label`` becomes a tooltip, so the GWAS-SSF column can read ``no`` while
+    still carrying the exact declaration (``pre-GWAS-SSF`` vs ``non-GWAS-SSF``).
+    """
+    if value is None:
+        text, style = "?", "unknown"
+    elif value:
+        text, style = "yes", "ok"
+    else:
+        text, style = "no", "bad"
+    title = f' title="{html.escape(str(label))}"' if label else ""
+    return f'<span class="{style}"{title}>{text}</span>'
+
+
 def _table(
     headers: Iterable[str], rows: Iterable[Iterable[str]], *, numeric: tuple[int, ...] = ()
 ) -> str:
@@ -128,15 +144,14 @@ def _document(title: str, body: str, provenance: Optional[ProvenanceRecord]) -> 
     )
 
 
-def write_report(
-    path: Path,
+def render_report(
     *,
     title: str = "GWASPoker report",
     search_results: Optional[list[Any]] = None,
     assessments: Optional[list[Any]] = None,
     provenance: Optional[ProvenanceRecord] = None,
-) -> Path:
-    """Write a self-contained HTML report."""
+) -> str:
+    """Render a self-contained HTML report as a string."""
     sections: list[str] = [
         f"<h1>{html.escape(title)}</h1>",
         '<p class="sub">API-aware pre-download triage of GWAS summary statistics '
@@ -150,9 +165,29 @@ def write_report(
         for assessment in assessments:
             sections.append(_assessment_detail_section(assessment))
 
+    return _document(title, "".join(sections), provenance)
+
+
+def write_report(
+    path: Path,
+    *,
+    title: str = "GWASPoker report",
+    search_results: Optional[list[Any]] = None,
+    assessments: Optional[list[Any]] = None,
+    provenance: Optional[ProvenanceRecord] = None,
+) -> Path:
+    """Write a self-contained HTML report to ``path``."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_document(title, "".join(sections), provenance), encoding="utf-8")
+    path.write_text(
+        render_report(
+            title=title,
+            search_results=search_results,
+            assessments=assessments,
+            provenance=provenance,
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -173,7 +208,20 @@ def _search_section(results: list[Any]) -> str:
                 _count(samples.total),
                 _count(samples.cases),
                 _count(samples.controls),
-                _bool_cell(study.summary_statistics_available),
+                _tristate_cell(
+                    result.file_available
+                    if result.file_available is not None
+                    else study.summary_statistics_available
+                ),
+                _tristate_cell(result.metadata_available),
+                _tristate_cell(result.harmonised_available),
+                _tristate_cell(result.is_ssf, label=result.ssf_status),
+                (
+                    '<span class="ok">READY</span>'
+                    if result.prs_from_metadata
+                    else '<span class="unknown">?</span>'
+                ),
+                _tristate_cell(result.probe_needed),
                 _esc(study.study_year),
                 _esc(study.pubmed_id),
             ]
@@ -181,10 +229,35 @@ def _search_section(results: list[Any]) -> str:
     return (
         "<h2>Study search</h2>"
         + _table(
-            ["GCST", "Trait", "Population", "N", "Cases", "Controls", "Sum stats", "Year", "PMID"],
+            [
+                "GCST",
+                "Trait",
+                "Population",
+                "N",
+                "Cases",
+                "Controls",
+                "File",
+                "SSF Meta",
+                "Harmonised",
+                "GWAS-SSF",
+                "PRS",
+                "Probe",
+                "Year",
+                "PMID",
+            ],
             rows,
-            numeric=(3, 4, 5, 7, 8),
+            numeric=(3, 4, 5, 12, 13),
         )
+        + '<ul class="notes"><li><strong>File</strong> a data file is published · '
+        "<strong>SSF Meta</strong> the GWAS-SSF metadata sidecar is retrievable "
+        "(a static file, not an API) · <strong>Harmonised</strong> a harmonised/ "
+        "product exists · <strong>GWAS-SSF</strong> the file declares the standard's "
+        "column set (hover for the exact declaration) · <strong>PRS</strong> the "
+        "verdict derivable from that declaration alone · <strong>Probe</strong> "
+        "whether bytes must be read from the data file.</li>"
+        "<li>A sidecar can exist while the file is pre- or non-GWAS-SSF, in which "
+        "case a probe is still required. <code>?</code> means the fact could not be "
+        "established, which is not the same as <code>no</code>.</li></ul>"
         + _provenance_note(results)
     )
 

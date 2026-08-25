@@ -242,7 +242,9 @@ _HARMONISED_INDEX = """<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">
    <tr><th colspan="5"><hr></th></tr>
 <tr><td valign="top"><img src="/icons/back.gif" alt="[PARENTDIR]"></td><td><a href="/pub/databases/gwas/summary_statistics/X/GCST90000001/">Parent Directory</a></td><td>&nbsp;</td><td align="right">  - </td><td>&nbsp;</td></tr>
 <tr><td valign="top"><img src="/icons/compressed.gif" alt="[   ]"></td><td><a href="12345678-GCST90000001-EFO_0000001-Build37.f.tsv.gz">12345678-GCST90000001-EFO_0000001-Build37.f.tsv.gz</a></td><td align="right">2021-12-06 14:14  </td><td align="right">218M</td><td>&nbsp;</td></tr>
+<tr><td valign="top"><img src="/icons/text.gif" alt="[TXT]"></td><td><a href="12345678-GCST90000001-EFO_0000001-Build37.f.tsv.gz-meta.yaml">12345678-GCST90000001-EFO_0000001-Build37.f.tsv.gz-meta.yaml</a></td><td align="right">2025-02-07 19:49  </td><td align="right">784 </td><td>&nbsp;</td></tr>
 <tr><td valign="top"><img src="/icons/compressed.gif" alt="[   ]"></td><td><a href="12345678-GCST90000001-EFO_0000001.h.tsv.gz">12345678-GCST90000001-EFO_0000001.h.tsv.gz</a></td><td align="right">2021-12-06 14:14  </td><td align="right">378M</td><td>&nbsp;</td></tr>
+<tr><td valign="top"><img src="/icons/text.gif" alt="[TXT]"></td><td><a href="12345678-GCST90000001-EFO_0000001.h.tsv.gz-meta.yaml">12345678-GCST90000001-EFO_0000001.h.tsv.gz-meta.yaml</a></td><td align="right">2025-02-07 19:49  </td><td align="right">776 </td><td>&nbsp;</td></tr>
 <tr><td valign="top"><img src="/icons/text.gif" alt="[TXT]"></td><td><a href="md5sum.txt">md5sum.txt</a></td><td align="right">2025-02-07 19:49  </td><td align="right">384 </td><td>&nbsp;</td></tr>
    <tr><th colspan="5"><hr></th></tr>
 </table>

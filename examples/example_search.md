@@ -8,28 +8,49 @@ All output below is copied from real runs against the live GWAS Catalog on
 ## Basic search
 
 ```bash
-gwaspoker search --trait migraine --limit 8
+gwaspoker search --trait migraine --population European --limit 8
 ```
 
 ```text
-GWAS Catalog studies for migraine
-GCST          Trait                                Population        N       Cases  Controls  Sum stats  Year      PMID
-GCST011064    Migraine and/or systolic blood pre…  European   1,094,154    59,674   316,078     no      2020  32632093
-GCST011065    Migraine and/or pulse pressure       European   1,094,154    59,674   316,078     no      2020  32632093
-GCST011063    Migraine and/or diastolic blood pr…  European   1,094,154    59,674   316,078     no      2020  32632093
-GCST010091    Endometriosis or migraine            European,      411,051   46,262   364,789     no      2020  32121467
-                                                   East Asian
-GCST003281    Migraine                             European     375,752    59,674   316,078     no      2016  27322543
-GCST004346    Migraine or coronary artery disease  European,    230,881    59,773   171,108     no      2017  28957430
-                                                   NR
-GCST002346    Migraine                             European     118,710    23,285    95,425     no      2013  23793025
-GCST001631    Migraine                             European      23,230     5,122    18,108     no      2011  21666692
-
-8 study/studies. Sample counts carry provenance; run with --format json to see it.
+GWAS Catalog studies for migraine in European
+GCST          Trait                          Population        N   Cases  Controls  File  API  Harmonised  GWAS-SSF  Year      PMID
+GCST90473326  ICD10 G43: Migraine            European    458,440  25,393   433,047  yes   yes     yes        yes     2025  40770095
+GCST90083812  ICD10 G43.9: Migraine,         European    387,898   3,383   384,515  yes   yes      no         no     2021  34662886
+              unspecified (Gene-based
+              burden)
+GCST90079826  ICD10 G43.9: Migraine,         European    387,898   3,383   384,515  yes   yes     yes         no     2021  34662886
+              unspecified
+GCST90079827  ICD10 G43: Migraine            European    378,172   8,426   369,746  yes   yes     yes         no     2021  34662886
+GCST90671940  Migraine                       European    341,050  10,881   330,169  yes   yes      no        yes     2022  35115687
+GCST90081731  Migraine (Gene-based burden)   European    331,754  14,131   317,623  yes   yes      no         no     2021  34662886
 ```
 
-Note `Sum stats: no` on all of these — they publish top associations only. That
-is exactly the filter you usually want next.
+Four columns say what it will take to actually use each study:
+
+| Column | Means |
+| --- | --- |
+| **File** | A summary-statistics data file is published |
+| **API** | The GWAS-SSF `-meta.yaml` sidecar is retrievable, so the structured route can describe the file and `assess` needs **no probe** |
+| **Harmonised** | A `harmonised/` product is published alongside the raw submission |
+| **GWAS-SSF** | The file declares conformance to GWAS-SSF v1.0, so its mandatory column set is guaranteed |
+
+Each is `yes`, `no`, or `?` when the fact could not be established. `?` is never
+rendered as a blank — a blank cell reads as "no" to most people, and the two are
+different facts.
+
+Reading the table above: `GCST90473326` is the best candidate — it has a file, a
+readable sidecar, a harmonised product, *and* declares GWAS-SSF, so `assess` will
+return a verdict without transferring any data. The `(Gene-based burden)` studies
+have no harmonised product, so they will need liftover if your genotypes are on a
+different build.
+
+These four columns cost one FTP directory listing plus one sidecar fetch per
+study — about a second each. Pass `--no-check-files` to skip them (they show `?`)
+when you only want the trait and sample counts:
+
+```bash
+gwaspoker search --trait migraine --no-check-files    # returns immediately
+```
 
 ---
 
@@ -41,19 +62,17 @@ gwaspoker search --trait migraine --population European --sumstats-only --limit 
 
 ```text
 GWAS Catalog studies for migraine in European
-GCST          Trait                               Population        N   Cases  Controls  Sum stats  Year      PMID
-GCST90271641  Migraine                            European    513,266  26,052   487,214     yes     2023  37415806
-GCST90043745  Migraine (PheCode 340)              European    456,348   1,488   454,860     yes     2021  34737426
-GCST90475837  Migraine (PheCode 340)              European    437,667  31,836   405,831     yes     2024  39024449
-GCST90435920  Migraine (PheCode 340)              European    401,650   2,870   398,780     yes     2018  30104761
-GCST90079826  ICD10 G43.9: Migraine, unspecified  European    387,898   3,383   384,515     yes     2021  34662886
-GCST90079827  ICD10 G43: Migraine                 European    378,172   8,426   369,746     yes     2021  34662886
-GCST90081731  Migraine (Gene-based burden)        European    331,754  14,131   317,623     yes     2021  34662886
-GCST90077745  Migraine                            European    331,754  14,131   317,623     yes     2021  34662886
-GCST90081732  ICD10 G43: Migraine (Gene-based     European    329,052  11,475   317,577     yes     2021  34662886
-              burden)
-GCST90475546  Migraine headaches                  European    315,668  28,635   287,033     yes     2024  39024449
+GCST          Trait                          Population        N   Cases  Controls  File  API  Harmonised  GWAS-SSF  Year      PMID
+GCST90473326  ICD10 G43: Migraine            European    458,440  25,393   433,047  yes   yes     yes        yes     2025  40770095
+GCST90079826  ICD10 G43.9: Migraine,         European    387,898   3,383   384,515  yes   yes     yes         no     2021  34662886
+              unspecified
+GCST90079827  ICD10 G43: Migraine            European    378,172   8,426   369,746  yes   yes     yes         no     2021  34662886
+GCST90671940  Migraine                       European    341,050  10,881   330,169  yes   yes      no        yes     2022  35115687
+GCST90077745  Migraine                       European    331,754  14,131   317,623  yes   yes     yes         no     2021  34662886
 ```
+
+With `--sumstats-only`, every row has `File = yes` by construction, so the
+interesting columns become API, Harmonised and GWAS-SSF.
 
 The GWAS Catalog REST API v1 cannot filter on summary-statistics availability
 server-side, so GWASPoker oversamples and filters client-side. Without that the
@@ -65,22 +84,23 @@ actually use.
 ## Where the numbers came from
 
 ```bash
-gwaspoker search --trait migraine --limit 5 --show-provenance
+gwaspoker search --trait migraine --limit 5 --show-provenance --no-check-files
 ```
 
 ```text
                 Sample-count provenance
- GCST          N source        Cases source  Controls source
- GCST011064    structured_api  regex         regex
- GCST011065    structured_api  regex         regex
- GCST003281    structured_api  regex         regex
- GCST002346    structured_api  regex         regex
- GCST001631    structured_api  regex         regex
+ GCST          N source  Cases source  Controls source
+ GCST90083812  regex     regex         regex
+ GCST90079826  regex     regex         regex
+ GCST90079827  regex     regex         regex
+ GCST90083813  regex     regex         regex
+ GCST90081731  regex     regex         regex
 ```
 
 `structured_api` means the Catalog's own `ancestries[].numberOfIndividuals`
-field. `regex` means the count was parsed from the free-text
-`initialSampleDescription`, for example:
+field, and `ssf_metadata` means the count came from the GWAS-SSF sidecar that the
+availability check fetched anyway. `regex` means the count was parsed from the
+free-text `initialSampleDescription`, for example:
 
 ```text
 "14,131 European ancestry cases, 317,623 European ancestry controls"
@@ -90,6 +110,11 @@ field. `regex` means the count was parsed from the free-text
 A value that could not be established anywhere is `unknown` — never `0`, never
 a blank that reads as zero. That distinction is why the provenance columns
 exist.
+
+Running without `--no-check-files` can *improve* these: the GWAS-SSF sidecar is
+fetched for the availability columns anyway, and when it carries `sample_size`,
+`case_count` or `control_count` those authoritative values replace the regex
+ones and the source becomes `ssf_metadata`.
 
 ---
 
@@ -106,11 +131,17 @@ gwaspoker search --trait migraine --population European \
 ```text
 study_accession, reported_trait, mapped_trait, efo_ids, population,
 sample_size, sample_size_source, cases, cases_source, controls,
-controls_source, summary_statistics_available, summary_statistics_location,
-initial_sample_description, replication_sample_description, genome_build,
-study_year, pubmed_id, first_author, journal, publication_title,
-association_count, api_source, ancestry_match_score
+controls_source, file_available, api_available, harmonised_available,
+ssf_status, summary_statistics_available, summary_statistics_location,
+resolved_file_name, resolved_file_size, initial_sample_description,
+replication_sample_description, genome_build, study_year, pubmed_id,
+first_author, journal, publication_title, association_count, api_source,
+ancestry_match_score
 ```
+
+`ssf_status` carries the full string (`GWAS-SSF` / `pre-GWAS-SSF`) rather than
+the table's yes/no, and `resolved_file_name` / `resolved_file_size` record which
+file the availability check actually looked at.
 
 JSON output additionally carries the full provenance block:
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -64,6 +65,15 @@ _PROBE_BYTES = typer.Option(
 _HARMONISED = typer.Option(
     None, "--harmonised", help="auto (default), yes or no -- prefer the harmonised file."
 )
+
+#: Reported-trait substrings excluded from `search` by default.
+#:
+#: Gene-based burden results aggregate variants to a gene and are not
+#: variant-level summary statistics, so they cannot produce PRS weights at all.
+#: The Catalog labels their files `file_type: non-GWAS-SSF`. They are dropped by
+#: default because they can never answer the question `search` is asked, but the
+#: count dropped is always printed, and --no-default-excludes restores them.
+DEFAULT_EXCLUDES: tuple[str, ...] = ("Gene-based burden",)
 
 
 def _setup(
@@ -136,9 +146,31 @@ def search(
     check_files: bool = typer.Option(
         True,
         "--check-files/--no-check-files",
-        help="Look up File / API / Harmonised / GWAS-SSF availability for each "
-        "result. Costs about a second per study; --no-check-files leaves those "
-        "columns as '?' and returns immediately.",
+        help="Look up File / SSF Meta / Harmonised / GWAS-SSF / PRS / Probe for "
+        "each result. Two or three requests per study; --no-check-files leaves "
+        "those columns as '?' and returns immediately.",
+    ),
+    workers: Optional[int] = typer.Option(
+        None,
+        "--workers",
+        "-w",
+        min=1,
+        max=16,
+        help="Threads for the file-availability stage (default 6). All workers "
+        "share one process-wide rate limiter, so this overlaps latency rather "
+        "than raising the request rate.",
+    ),
+    exclude: list[str] = typer.Option(
+        None,
+        "--exclude",
+        help="Drop studies whose reported trait contains this text "
+        "(case-insensitive, repeatable).",
+    ),
+    default_excludes: bool = typer.Option(
+        True,
+        "--default-excludes/--no-default-excludes",
+        help=f"Also exclude {', '.join(repr(p) for p in DEFAULT_EXCLUDES)}, which "
+        "are not variant-level summary statistics and cannot yield PRS weights.",
     ),
     llm: bool = typer.Option(
         False, "--llm/--no-llm", help="Allow the ELECTRA fallback for unresolved sample counts."
@@ -160,12 +192,21 @@ def search(
     follow EFO annotation rather than string similarity against a downloaded
     spreadsheet.
     """
-    config = _setup(verbose, quiet, config_path, enable_llm_fallback=llm or None)
+    config = _setup(
+        verbose, quiet, config_path, enable_llm_fallback=llm or None, max_workers=workers
+    )
     output_format = (
         _validate_choice(output_format, ("table", "csv", "json", "html"), "--format") or "table"
     )
+    exclude = list(exclude or []) + (list(DEFAULT_EXCLUDES) if default_excludes else [])
 
-    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        TextColumn,
+        TimeElapsedColumn,
+        TimeRemainingColumn,
+    )
 
     from gwaspoker.catalog.discovery import DiscoveryService
     from gwaspoker.provenance import build_provenance
@@ -174,52 +215,89 @@ def search(
     from gwaspoker.reporting import html as report_html
     from gwaspoker.reporting import json as report_json
 
+    console = report_console.console
+    patterns = list(exclude)
+    started = time.perf_counter()
+
     with DiscoveryService(config, enable_llm=llm) as service:
+        # --- Stage 1: metadata only. Fast, and finishes with a known count. ---
         try:
-            # File availability costs a directory listing plus a sidecar fetch
-            # per study, so the run is long enough to need a progress bar.
-            with Progress(
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("{task.completed}/{task.total}"),
-                TimeRemainingColumn(),
-                console=report_console.console,
-                disable=quiet or not check_files,
-                transient=True,
-            ) as bar:
-                task = bar.add_task("Checking published files", total=limit)
-
-                def on_progress(index: int, total: int, accession: str) -> None:
-                    bar.update(
-                        task, completed=index, total=total, description=f"Checking {accession}"
-                    )
-
+            with console.status("[dim]Resolving trait and retrieving studies...[/dim]") as status:
+                status.update("[dim]Resolving trait...[/dim]")
                 results = service.search(
                     trait,
                     population=population,
                     limit=limit,
                     summary_stats_only=summary_stats_only,
-                    check_files=check_files,
-                    progress=on_progress if check_files else None,
+                    exclude=patterns,
                 )
         except GWASPokerError as exc:
-            report_console.console.print(f"[red]Search failed:[/red] {exc}")
+            console.print(f"[red]Search failed:[/red] {exc}")
             raise typer.Exit(1) from exc
+
+        if not quiet:
+            console.print(f"[dim]Retrieved {len(results)} study/studies.[/dim]")
+            if service.last_excluded:
+                console.print(
+                    f"[dim]Excluded {service.last_excluded} matching "
+                    f"{', '.join(repr(p) for p in patterns)} "
+                    "(pass --no-default-excludes to keep them).[/dim]"
+                )
+
+        # --- Stage 2: file availability. Expensive, so parallel and measured. ---
+        if check_files and results:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                console=console,
+                disable=quiet,
+                transient=True,
+            ) as bar:
+                task = bar.add_task("Checking published files", total=len(results))
+
+                def on_progress(done: int, total: int, _accession: str) -> None:
+                    # Workers finish out of order, so a per-study label would
+                    # flicker; the count and ETA are the useful signals.
+                    bar.update(task, completed=done, total=total)
+
+                service.check_files(results, workers=workers, progress=on_progress)
 
         record = build_provenance(
             config,
             command=f"gwaspoker search --trait {trait!r}",
             catalog_metadata=service.catalog.api_metadata(),
         )
+        excluded = service.last_excluded
 
+    elapsed = time.perf_counter() - started
     record.add_operation(
         "search",
-        {"trait": trait, "population": population, "limit": limit, "results": len(results)},
+        {
+            "trait": trait,
+            "population": population,
+            "limit": limit,
+            "results": len(results),
+            "excluded": excluded,
+            "exclude_patterns": patterns,
+            "checked_files": check_files,
+            "workers": workers or config.max_workers,
+            "elapsed_seconds": round(elapsed, 2),
+        },
     )
     record.failures = FAILURES.to_list()
 
-    if output_format == "table" or output is None:
+    # `--format` selects the representation; `--output` only selects the
+    # destination. Without --output a non-table format goes to stdout, which is
+    # what makes `gwaspoker search --format json | jq` work.
+    if output is None and output_format in ("json", "csv", "html"):
+        _emit_to_stdout(output_format, results, record, trait, report_csv, report_html, report_json)
+    else:
         report_console.render_search_results(results, trait=trait, population=population)
+        if not quiet:
+            console.print(f"[dim]Completed in {elapsed:.1f} s.[/dim]")
         if show_provenance and results:
             report_console.render_sample_provenance(results)
 
@@ -246,6 +324,41 @@ def search(
         report_console.console.print(f"[green]Wrote provenance[/green] {provenance}")
 
     _finish(failure_log)
+
+
+def _emit_to_stdout(
+    output_format: str,
+    results,
+    record,
+    trait: str,
+    report_csv,
+    report_html,
+    report_json,
+) -> None:
+    """Write a non-table format to stdout when no --output was given.
+
+    ``--format`` chooses the representation; ``--output`` chooses only the
+    destination. The two are independent. Previously a missing ``--output``
+    forced the table regardless of ``--format``, so ``--format json`` silently
+    printed a table and could not be piped into ``jq``.
+    """
+    if output_format == "json":
+        document = {
+            "report_type": "search",
+            "provenance": record.to_dict(),
+            "results": report_json.search_payload(results),
+        }
+        sys.stdout.write(report_json.dumps(document) + "\n")
+    elif output_format == "csv":
+        sys.stdout.write(report_csv.render_search_csv(results))
+    else:  # html
+        sys.stdout.write(
+            report_html.render_report(
+                title=f"GWASPoker search: {trait}",
+                search_results=results,
+                provenance=record,
+            )
+        )
 
 
 # ======================================================================

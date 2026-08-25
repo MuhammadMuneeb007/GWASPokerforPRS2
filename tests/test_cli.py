@@ -348,3 +348,79 @@ def test_json_report_carries_provenance(tmp_path, config) -> None:
     assert payload["provenance"]["environment"]["gwaspoker_version"] == __version__
     assert payload["provenance"]["environment"]["python_version"]
     assert payload["provenance"]["configuration"]["probe_bytes"] == DEFAULT_PROBE_BYTES
+
+
+# ----------------------------------------------------------------------
+# Search availability columns
+# ----------------------------------------------------------------------
+
+
+def test_search_csv_carries_the_availability_columns(tmp_path) -> None:
+    from gwaspoker.catalog.discovery import SearchResult
+    from gwaspoker.catalog.models import Study
+    from gwaspoker.reporting.csv import SEARCH_COLUMNS, write_search_csv
+
+    for column in ("file_available", "api_available", "harmonised_available", "ssf_status"):
+        assert column in SEARCH_COLUMNS
+
+    result = SearchResult(
+        study=Study(study_accession="GCST1", reported_trait="Migraine"),
+        file_available=True,
+        api_available=True,
+        harmonised_available=False,
+        ssf_status="GWAS-SSF",
+    )
+    path = write_search_csv([result], tmp_path / "search.csv")
+
+    import pandas as pd
+
+    frame = pd.read_csv(path)
+    assert bool(frame["file_available"].iloc[0]) is True
+    assert bool(frame["harmonised_available"].iloc[0]) is False
+    assert frame["ssf_status"].iloc[0] == "GWAS-SSF"
+
+
+def test_search_table_renders_yes_no_question(capsys) -> None:
+    """The four columns must read yes / no / ? -- never a blank."""
+    from gwaspoker.catalog.discovery import SearchResult
+    from gwaspoker.catalog.models import Study
+    from gwaspoker.reporting.console import console, render_search_results
+
+    results = [
+        SearchResult(
+            study=Study(study_accession="GCST1", reported_trait="Migraine"),
+            file_available=True,
+            api_available=True,
+            harmonised_available=True,
+            ssf_status="GWAS-SSF",
+        ),
+        SearchResult(
+            study=Study(study_accession="GCST2", reported_trait="Migraine"),
+            file_available=True,
+            api_available=False,
+            harmonised_available=False,
+            ssf_status=None,
+        ),
+    ]
+    with console.capture() as capture:
+        render_search_results(results, trait="migraine")
+    output = capture.get()
+
+    for header in ("File", "API", "Harmonised", "GWAS-SSF"):
+        assert header in output
+    assert "?" in output  # GCST2's unestablished SSF status
+    assert "Sum stats" not in output  # the column it replaced
+
+
+def test_tristate_distinguishes_unknown_from_false() -> None:
+    from gwaspoker.reporting.console import _tristate
+
+    assert _tristate(True).plain == "yes"
+    assert _tristate(False).plain == "no"
+    assert _tristate(None).plain == "?"
+
+
+def test_search_help_documents_the_check_files_flag() -> None:
+    result = runner.invoke(app, ["search", "--help"])
+    assert result.exit_code == 0
+    assert "--no-check-files" in result.stdout

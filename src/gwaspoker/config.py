@@ -40,8 +40,18 @@ class GWASPokerConfig:
     max_retries: int = 3
     retry_backoff: float = 0.5
     user_agent: str = "gwaspoker/2.0.0 (+https://github.com/muneebsiddique/gwaspoker)"
-    #: The v2 API documents a 15 queries-per-second limit. We stay well under it.
+    #: Requests started per second, across the whole process.
+    #:
+    #: The GWAS Catalog documents 15 queries/second for REST API v2. That figure
+    #: is NOT documented for ftp.ebi.ac.uk, which is where the file-availability
+    #: checks actually go, so this default is deliberately conservative and is
+    #: not derived from the v2 limit.
     max_requests_per_second: float = 8.0
+
+    #: Threads used for the parallel file-availability checks in `search`.
+    #: Every worker still passes through the shared rate limiter above, so this
+    #: controls concurrency, not throughput.
+    max_workers: int = 6
 
     # --- API endpoints ---------------------------------------------------
     rest_api_v2_base: str = "https://www.ebi.ac.uk/gwas/rest/api/v2"

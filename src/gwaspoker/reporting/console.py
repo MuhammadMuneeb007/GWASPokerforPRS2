@@ -58,6 +58,13 @@ def _boolean(value: Optional[bool], true_label: str = "yes", false_label: str = 
     return Text(true_label, style="green") if value else Text(false_label, style="red")
 
 
+def _prs_cell(verdict: Optional[str]) -> Text:
+    """PRS verdict derived from metadata alone, or ``?`` when undetermined."""
+    if not verdict:
+        return Text("?", style="dim")
+    return Text(verdict, style="green" if verdict == "READY" else "yellow")
+
+
 def _tristate(value: Optional[bool]) -> Text:
     """Compact yes / no / ? for the narrow availability columns.
 
@@ -102,9 +109,11 @@ def render_search_results(
     table.add_column("Controls", justify="right")
     # What it takes to actually use this study, at a glance.
     table.add_column("File", justify="center")
-    table.add_column("API", justify="center")
+    table.add_column("SSF Meta", justify="center")
     table.add_column("Harmonised", justify="center")
     table.add_column("GWAS-SSF", justify="center")
+    table.add_column("PRS", justify="center")
+    table.add_column("Probe", justify="center")
     table.add_column("Year", justify="right")
     table.add_column("PMID", justify="right")
 
@@ -124,9 +133,11 @@ def render_search_results(
             _count(samples.cases),
             _count(samples.controls),
             _tristate(file_available),
-            _tristate(result.api_available),
+            _tristate(result.metadata_available),
             _tristate(result.harmonised_available),
             _tristate(result.is_ssf),
+            _prs_cell(result.prs_from_metadata),
+            _tristate(result.probe_needed),
             unknown_or(study.study_year),
             unknown_or(study.pubmed_id),
         )
@@ -134,17 +145,26 @@ def render_search_results(
     console.print(table)
     console.print(
         f"\n[dim]{len(results)} study/studies. "
-        "File = a data file is published · API = GWAS-SSF metadata is retrievable, "
-        "so `assess` needs no probe · Harmonised = a harmonised/ product exists · "
-        "GWAS-SSF = the file declares the standard's column set.[/dim]"
+        "[b]File[/b] a data file is published · "
+        "[b]SSF Meta[/b] the GWAS-SSF metadata sidecar is retrievable (a static file, "
+        "not an API) · "
+        "[b]Harmonised[/b] a harmonised/ product exists · "
+        "[b]GWAS-SSF[/b] the file declares the standard's column set · "
+        "[b]PRS[/b] the verdict derivable from that declaration alone · "
+        "[b]Probe[/b] whether bytes must be read from the data file.[/dim]"
+    )
+    console.print(
+        "[dim]PRS = READY exactly when GWAS-SSF = yes, because only that declaration "
+        "fixes the mandatory columns; Probe is its inverse. A sidecar can exist while "
+        "the file is pre- or non-GWAS-SSF, in which case a probe is still required.[/dim]"
     )
     console.print("[dim]Sample counts carry provenance; run with --format json to see it.[/dim]")
 
-    unreadable = [r for r in results if r.file_check_error]
-    if unreadable:
+    unresolved = [r for r in results if r.file_check_error]
+    if unresolved:
         console.print(
-            f"[dim]{len(unreadable)} study/studies had a published file that could not be "
-            "listed; see the failure summary below.[/dim]"
+            f"[dim]{len(unresolved)} study/studies could not be checked completely; their "
+            "columns read '?' rather than 'no'. See the failure summary below.[/dim]"
         )
 
 
