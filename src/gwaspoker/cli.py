@@ -604,6 +604,7 @@ def scan(
             target=_validate_choice(target_workflow, ("prs",), "--target") or "prs",
             evidence_source="local_file" if path.exists() else "file_probe",
             header=result.header.raw_header if result.header else (),
+            validation=result.value_validation,
         )
         report_console.render_readiness(readiness)
 

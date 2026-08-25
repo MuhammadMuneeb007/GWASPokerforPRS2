@@ -130,6 +130,15 @@ concepts:
       "1_12345_A_G". Used to align variants against an LD reference panel.
     prs_tool_symbol: SNP
     category: identification
+    ambiguous_aliases:
+      # These are generic column names. They frequently do hold a variant
+      # identifier, but the header alone is weak evidence -- "ID" is equally at
+      # home holding a row number. They map here at reduced confidence, and the
+      # value validator decides whether the data supports the claim.
+      - id
+      - name
+      - marker
+      - var_name
     aliases:
       - variant_id
       - snp
@@ -175,6 +184,11 @@ concepts:
   # lists, so is_string_in_list() reported the same column as both. Resolved
   # here in favour of the dominant PLINK/METAL convention: A1 is the effect
   # allele, A2/A0 the other allele.
+  #
+  # That convention is near-universal in PRS-facing tooling (PLINK, METAL, LDSC
+  # and PRSice all read A1 as the effect allele), so A1/A2 keep full alias
+  # confidence. ALT/REF do not: they are VCF coordinate conventions and are
+  # mapped to their own `alternate_allele` / `reference_allele` concepts.
   # ------------------------------------------------------------------
 
   effect_allele:
@@ -206,10 +220,6 @@ concepts:
       - tested_allele
       - test_allele
       - t_allele
-      - alt
-      - alt_allele
-      - alternate_allele
-      - alternative_allele
       - hm_effect_allele
       - allele_effect
 
@@ -242,13 +252,49 @@ concepts:
       - dec_allele
       - decreaser_allele
       - baseline_allele
-      - ref
-      - ref_allele
-      - reference_allele
       - a2_other
       - hm_other_allele
       - major_allele
       - majorallele
+
+  alternate_allele:
+    description: >-
+      The ALT allele of a VCF-style record. ALT is a *coordinate* convention --
+      it is the non-reference allele at the site -- and says nothing about which
+      allele the reported effect applies to. Many GWAS files do use ALT as the
+      effect allele, but that is a per-source convention, not a rule, so
+      GWASPoker maps ALT to its own concept and reports the ambiguity rather
+      than asserting effect orientation. Confirm against the file's own
+      documentation before using it as A1.
+    prs_tool_symbol: ALT
+    category: allele
+    ambiguous: true
+    ambiguity_note: >-
+      ALT is the non-reference allele, not necessarily the effect allele.
+      Confirm the effect orientation before treating this as A1.
+    aliases:
+      - alt
+      - alt_allele
+      - alternate_allele
+      - alternative_allele
+
+  reference_allele:
+    description: >-
+      The REF allele of a VCF-style record: the allele on the reference genome.
+      Like ALT this is a coordinate convention, not a statement about effect
+      orientation. Some sources additionally use "reference_allele" to mean the
+      effect allele (LDSC's own alias table maps REFERENCE_ALLELE to A1), which
+      is precisely why GWASPoker will not silently resolve it either way.
+    prs_tool_symbol: REF
+    category: allele
+    ambiguous: true
+    ambiguity_note: >-
+      REF is the reference-genome allele, not necessarily the other allele.
+      Sources disagree; confirm before treating this as A2.
+    aliases:
+      - ref
+      - ref_allele
+      - reference_allele
 
   # ------------------------------------------------------------------
   # Effect measures
@@ -502,7 +548,6 @@ concepts:
       - af1
       - af_effect_allele
       - hm_effect_allele_frequency
-      - minorallelefrequency
       - all_meta_af
       - inv_var_meta_effect_allele_frequency
 
@@ -515,6 +560,9 @@ concepts:
     category: frequency
     aliases:
       - minor_allele_frequency
+      - minorallelefrequency
+      - minorallelefreq
+      - minor_allele_freq
       - maf
       - minor_af
       - maf_ukb

@@ -703,6 +703,7 @@ class DiscoveryService:
                     target=prs_target,
                     evidence_source="file_probe",
                     header=probe.header.raw_header if probe.header else (),
+                    validation=probe.value_validation,
                 )
                 if result.readiness is None:
                     result.readiness = probe_readiness

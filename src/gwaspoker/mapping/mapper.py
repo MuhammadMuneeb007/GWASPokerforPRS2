@@ -41,8 +41,18 @@ class MappingMethod(str):
 
     CANONICAL = "canonical"
     ALIAS = "alias"
+    #: A curated alias whose header name is genuinely ambiguous ("ID", "ALT").
+    #: It maps, but at reduced confidence, and the value validator is expected
+    #: to confirm or challenge it.
+    AMBIGUOUS_ALIAS = "ambiguous_alias"
     HEURISTIC = "heuristic"
     NONE = "unknown"
+
+
+#: Confidence for a curated alias whose name does not, on its own, establish
+#: the concept. High enough to be useful, low enough that
+#: `readiness` treats it as uncertain without supporting value evidence.
+AMBIGUOUS_ALIAS_CONFIDENCE = 0.75
 
 
 @dataclass(frozen=True)
@@ -54,6 +64,11 @@ class ColumnConcept:
     prs_tool_symbol: str
     category: str
     aliases: tuple[str, ...]
+    #: Aliases that map here but whose header name is weak evidence.
+    ambiguous_aliases: tuple[str, ...] = ()
+    #: True when the concept itself carries a convention caveat (ALT/REF).
+    ambiguous: bool = False
+    ambiguity_note: str = ""
 
 
 @dataclass
@@ -172,13 +187,27 @@ class ColumnMapper:
         concept_name = self._alias_index.get(normalized)
         if concept_name:
             concept = self.concepts[concept_name]
+            ambiguous = normalized in concept.ambiguous_aliases or concept.ambiguous
             return ColumnMapping(
                 raw_name=raw_name,
                 normalized_name=normalized,
                 canonical_name=concept.name,
-                mapping_method=MappingMethod.ALIAS,
-                confidence=0.95,
+                mapping_method=(
+                    MappingMethod.AMBIGUOUS_ALIAS if ambiguous else MappingMethod.ALIAS
+                ),
+                confidence=AMBIGUOUS_ALIAS_CONFIDENCE if ambiguous else 0.95,
                 prs_tool_symbol=concept.prs_tool_symbol,
+                note=(
+                    (
+                        (concept.ambiguity_note or "").strip()
+                        or (
+                            f"{raw_name!r} is a generic column name; the header alone is "
+                            "weak evidence for this concept"
+                        )
+                    )
+                    if ambiguous
+                    else None
+                ),
             )
 
         # Layer 3: heuristics.
@@ -274,13 +303,22 @@ def _load_vocabulary(path: Path) -> tuple[dict[str, ColumnConcept], dict[str, st
     for name, entry in (data.get("concepts") or {}).items():
         if not isinstance(entry, dict):
             raise ValueError(f"Concept {name!r} in {path} is not a mapping")
-        aliases = tuple(normalize_column_name(a) for a in (entry.get("aliases") or []))
+        ambiguous_aliases = tuple(
+            normalize_column_name(a) for a in (entry.get("ambiguous_aliases") or [])
+        )
+        aliases = (
+            tuple(normalize_column_name(a) for a in (entry.get("aliases") or []))
+            + ambiguous_aliases
+        )
         concepts[name] = ColumnConcept(
             name=name,
             description=str(entry.get("description", "")).strip(),
             prs_tool_symbol=str(entry.get("prs_tool_symbol", "")).strip(),
             category=str(entry.get("category", "")).strip(),
             aliases=aliases,
+            ambiguous_aliases=ambiguous_aliases,
+            ambiguous=bool(entry.get("ambiguous", False)),
+            ambiguity_note=str(entry.get("ambiguity_note", "")).strip(),
         )
         for alias in aliases:
             if not alias:

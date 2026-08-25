@@ -72,6 +72,13 @@ class GWASPokerConfig:
     max_header_scan_lines: int = 200
     prefer_harmonised: str = "auto"  # auto | yes | no
 
+    #: Data rows retained from the probe prefix for value-domain validation.
+    #: These come from bytes already transferred -- raising this never causes
+    #: another request, it only keeps more of what the probe already decoded.
+    sample_rows: int = 50
+    #: Rows actually tested by the validator, bounded so a report stays small.
+    validation_rows: int = 50
+
     # --- Sample-size extraction -------------------------------------------
     enable_llm_fallback: bool = False
     llm_model: str = "ahotrod/electra_large_discriminator_squad2_512"

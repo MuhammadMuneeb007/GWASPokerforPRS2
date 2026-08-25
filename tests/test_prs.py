@@ -122,10 +122,26 @@ def test_combined_chrpos_field_satisfies_identification() -> None:
     assert requirement(result, "variant_identification").is_satisfied
 
 
-@pytest.mark.parametrize("effect", ["BETA", "OR", "hazard_ratio", "z_score"])
-def test_any_effect_measure_satisfies_the_effect_requirement(effect) -> None:
+@pytest.mark.parametrize("effect", ["BETA", "OR", "hazard_ratio"])
+def test_directly_usable_effect_measures_satisfy_the_requirement(effect) -> None:
+    """Beta is usable as-is; OR and HR after a deterministic log transform."""
     result = assess(("SNP", "A1", "A2", effect, "P"))
     assert requirement(result, "effect_size").is_satisfied
+
+
+def test_z_score_alone_does_not_satisfy_the_effect_requirement() -> None:
+    """A z-score is a test statistic (beta / se), not an effect size.
+
+    Recovering a weight from it needs the per-variant sample size and an allele
+    frequency: se ~= 1 / sqrt(2 * N * f * (1 - f)), beta ~= Z * se. Without
+    those the column cannot yield PRS weights at all, so it must not be
+    reported as satisfying the effect-size requirement on its own.
+    """
+    result = assess(("SNP", "A1", "A2", "Z", "P"))
+    item = requirement(result, "effect_size")
+    assert not item.is_satisfied
+    assert result.verdict is not ReadinessVerdict.READY
+    assert "test statistic" in (item.note or "")
 
 
 def test_neg_log10_p_satisfies_significance() -> None:
@@ -271,3 +287,89 @@ def test_bolt_lmm_p_values_map_to_p_value() -> None:
     mapper = get_mapper()
     for column in ("P_LINREG", "P_BOLT_LMM_INF", "p_bolt_lmm"):
         assert mapper.map_column(column).canonical_name == "p_value"
+
+
+# ----------------------------------------------------------------------
+# Z-score: a test statistic, not an effect size
+# ----------------------------------------------------------------------
+
+
+def test_z_with_sample_size_and_frequency_satisfies_the_effect_requirement() -> None:
+    """se ~= 1/sqrt(2*N*f*(1-f)), beta ~= Z*se -- both companions are needed."""
+    result = assess(("SNP", "A1", "A2", "Z", "P", "N", "EAF"))
+    item = requirement(result, "effect_size")
+    assert item.is_satisfied
+    assert set(item.canonical_concepts) == {"z_score", "sample_size", "effect_allele_frequency"}
+    assert result.verdict is ReadinessVerdict.READY
+
+
+@pytest.mark.parametrize("frequency", ["EAF", "MAF", "freq"])
+def test_any_allele_frequency_concept_can_support_a_z_score(frequency) -> None:
+    result = assess(("SNP", "A1", "A2", "Z", "P", "N", frequency))
+    assert requirement(result, "effect_size").is_satisfied
+
+
+def test_z_with_sample_size_but_no_frequency_is_not_ready() -> None:
+    result = assess(("SNP", "A1", "A2", "Z", "P", "N"))
+    assert not requirement(result, "effect_size").is_satisfied
+    assert result.verdict is not ReadinessVerdict.READY
+
+
+def test_z_with_frequency_but_no_sample_size_is_not_ready() -> None:
+    result = assess(("SNP", "A1", "A2", "Z", "P", "EAF"))
+    assert not requirement(result, "effect_size").is_satisfied
+    assert result.verdict is not ReadinessVerdict.READY
+
+
+def test_beta_alongside_z_is_used_directly() -> None:
+    """A usable beta makes the z-score's companions irrelevant."""
+    result = assess(("SNP", "A1", "A2", "BETA", "Z", "P"))
+    item = requirement(result, "effect_size")
+    assert item.is_satisfied
+    assert "beta" in item.canonical_concepts
+
+
+def test_z_only_explains_why_it_is_insufficient() -> None:
+    result = assess(("SNP", "A1", "A2", "Z", "P"))
+    note = requirement(result, "effect_size").note or ""
+    assert "sample size" in note
+    assert "allele frequency" in note
+
+
+# ----------------------------------------------------------------------
+# Sample size: one arm is not a total
+# ----------------------------------------------------------------------
+
+
+def test_cases_alone_does_not_satisfy_sample_size() -> None:
+    """A case count is not a sample size."""
+    result = assess(("SNP", "A1", "A2", "BETA", "P", "n_cases"))
+    assert not requirement(result, "sample_size").is_satisfied
+
+
+def test_controls_alone_does_not_satisfy_sample_size() -> None:
+    result = assess(("SNP", "A1", "A2", "BETA", "P", "n_controls"))
+    assert not requirement(result, "sample_size").is_satisfied
+
+
+def test_cases_and_controls_together_satisfy_sample_size_as_derived() -> None:
+    result = assess(("SNP", "A1", "A2", "BETA", "P", "n_cases", "n_controls"))
+    item = requirement(result, "sample_size")
+    assert item.is_satisfied
+    assert set(item.canonical_concepts) == {"cases", "controls"}
+    # The report must say the total was derived, not observed.
+    assert "DERIVED" in (item.note or "")
+
+
+def test_explicit_n_is_not_reported_as_derived() -> None:
+    result = assess(("SNP", "A1", "A2", "BETA", "P", "N"))
+    item = requirement(result, "sample_size")
+    assert item.is_satisfied
+    assert item.canonical_concepts == ("sample_size",)
+    assert "DERIVED" not in (item.note or "")
+
+
+def test_explicit_n_is_preferred_over_the_derived_total() -> None:
+    result = assess(("SNP", "A1", "A2", "BETA", "P", "N", "n_cases", "n_controls"))
+    item = requirement(result, "sample_size")
+    assert item.canonical_concepts == ("sample_size",)

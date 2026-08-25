@@ -309,8 +309,32 @@ def test_a1_maps_to_effect_allele_only(mapper: ColumnMapper) -> None:
 
 
 def test_minor_allele_frequency_is_not_an_allele(mapper: ColumnMapper) -> None:
-    """v1 listed minorallelefrequency under effect_allele_list."""
-    assert mapper.map_column("minorallelefrequency").canonical_name == "effect_allele_frequency"
+    """v1 listed minorallelefrequency under effect_allele_list -- it is a frequency."""
+    assert mapper.map_column("minorallelefrequency").canonical_name != "effect_allele"
+
+
+def test_minor_allele_frequency_is_not_effect_allele_frequency(
+    mapper: ColumnMapper,
+) -> None:
+    """MAF and EAF are different quantities and must not share a concept.
+
+    Which allele is *minor* is population-dependent; which allele carries the
+    *effect* is a property of the analysis. Conflating them silently swaps one
+    for the other in any downstream step that needs the effect allele's
+    frequency. LDSC's own alias table maps both MAF and EAF onto a single FRQ
+    column, which is exactly the conflation to avoid here.
+    """
+    for spelling in (
+        "minorallelefrequency",
+        "minor_allele_frequency",
+        "minor_allele_freq",
+        "minorallelefreq",
+        "MAF",
+    ):
+        assert mapper.map_column(spelling).canonical_name == "minor_allele_frequency"
+
+    for spelling in ("effect_allele_frequency", "EAF", "effect_allele_freq"):
+        assert mapper.map_column(spelling).canonical_name == "effect_allele_frequency"
 
 
 def test_weight_is_not_a_sample_size(mapper: ColumnMapper) -> None:
@@ -357,3 +381,58 @@ def test_first_for_prefers_higher_confidence(mapper: ColumnMapper) -> None:
 
 def test_mapper_is_cached_per_process() -> None:
     assert get_mapper() is get_mapper()
+
+
+# ----------------------------------------------------------------------
+# Ambiguous-alias audit
+# ----------------------------------------------------------------------
+
+
+def test_alt_and_ref_do_not_assert_effect_orientation(mapper: ColumnMapper) -> None:
+    """ALT/REF are VCF coordinate conventions, not effect statements.
+
+    ALT is simply the non-reference allele at the site. Many GWAS files do use
+    it as the effect allele, but that is a per-source convention. LDSC maps
+    REFERENCE_ALLELE to A1 (the *effect* allele) while VCF semantics would put
+    REF on the other side -- the disagreement is exactly why GWASPoker refuses
+    to resolve it from the header alone.
+    """
+    alt = mapper.map_column("ALT")
+    ref = mapper.map_column("REF")
+
+    assert alt.canonical_name == "alternate_allele"
+    assert ref.canonical_name == "reference_allele"
+    assert alt.canonical_name != "effect_allele"
+    assert ref.canonical_name != "other_allele"
+    for mapping in (alt, ref):
+        assert mapping.mapping_method == "ambiguous_alias"
+        assert mapping.confidence < 0.95
+        assert mapping.note
+
+
+def test_a1_and_a2_keep_full_confidence(mapper: ColumnMapper) -> None:
+    """A1/A2 are near-universal in PRS tooling, so they stay authoritative."""
+    assert mapper.map_column("A1").canonical_name == "effect_allele"
+    assert mapper.map_column("A2").canonical_name == "other_allele"
+    assert mapper.map_column("A1").confidence == 0.95
+    assert mapper.map_column("A2").confidence == 0.95
+
+
+@pytest.mark.parametrize("generic", ["ID", "NAME", "MARKER"])
+def test_generic_identifier_aliases_are_downgraded(mapper: ColumnMapper, generic) -> None:
+    """They stay usable, but the header alone is weak evidence."""
+    mapping = mapper.map_column(generic)
+    assert mapping.canonical_name == "variant_id"
+    assert mapping.mapping_method == "ambiguous_alias"
+    assert mapping.confidence < 0.95
+
+
+def test_specific_identifier_aliases_keep_full_confidence(mapper: ColumnMapper) -> None:
+    for specific in ("rsid", "variant_id", "MarkerName", "snpid"):
+        assert mapper.map_column(specific).confidence >= 0.95
+
+
+def test_ambiguous_aliases_still_resolve(mapper: ColumnMapper) -> None:
+    """Downgrading must not make common columns unusable."""
+    for alias in ("ID", "NAME", "ALT", "REF", "MARKER"):
+        assert mapper.map_column(alias).canonical_name != UNKNOWN_CONCEPT

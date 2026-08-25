@@ -126,6 +126,8 @@ class HeaderDetectionResult:
     encoding: Optional[str] = None
     preamble_lines: tuple[str, ...] = ()
     data_rows_seen: int = 0
+    #: Data rows retained from the probe prefix, for value-domain validation.
+    #: They cost nothing extra: the bytes were already decoded.
     sample_rows: tuple[tuple[str, ...], ...] = ()
     runner_up_score: Optional[float] = None
     features: dict[str, float] = field(default_factory=dict)
@@ -251,6 +253,7 @@ class HeaderDetector:
         encoding: Optional[str] = None,
         max_scan_lines: int = 200,
         delimiter: Optional[str] = None,
+        sample_rows: int = 50,
     ) -> HeaderDetectionResult:
         """Find the header row among ``lines``.
 
@@ -300,7 +303,7 @@ class HeaderDetector:
             encoding=encoding,
             preamble_lines=preamble,
             data_rows_seen=len(data_rows),
-            sample_rows=tuple(data_rows[:5]),
+            sample_rows=tuple(data_rows[:sample_rows]),
             runner_up_score=runner_up,
             features=best.features,
         )
@@ -452,6 +455,7 @@ def detect_header(
     max_scan_lines: int = 200,
     delimiter: Optional[str] = None,
     mapper: Optional[ColumnMapper] = None,
+    sample_rows: int = 50,
 ) -> HeaderDetectionResult:
     """Convenience wrapper around :class:`HeaderDetector`."""
     return HeaderDetector(mapper).detect(
@@ -459,6 +463,7 @@ def detect_header(
         encoding=encoding,
         max_scan_lines=max_scan_lines,
         delimiter=delimiter,
+        sample_rows=sample_rows,
     )
 
 

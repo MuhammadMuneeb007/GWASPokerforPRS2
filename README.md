@@ -346,6 +346,29 @@ in [`docs/MAPPING_SCHEMA.md`](docs/MAPPING_SCHEMA.md) and in
 
 ---
 
+### Value-domain validation
+
+The header proposes a concept; the sampled values test it. A column headed
+`CHR` whose values are `1:12345` is reported as a contradiction:
+
+```text
+FAIL CHR (header says chromosome)
+     only 0% of sampled values are 1-25, X, Y, MT/M ... the values disagree
+     example values: '1:12345', '2:88112'
+     Suggested concept: chromosome_position (reported, not applied)
+```
+
+The mapping is **not** silently changed — an automatic correction is an
+automatic opportunity to be wrong. The requirement it supported is downgraded
+instead, and both numbers survive: `header_confidence` records what the name
+supported, `confidence` what remained after the data had its say.
+
+These are structural sanity checks on rows the probe already decoded, not GWAS
+QC. GWASPoker applies no INFO/MAF/p-value filters and performs no
+transformations: `log(OR)`, `10**-x` on a −log10 p-value and `chr:pos` splitting
+are all *reported* and left for downstream tools. See
+[`docs/MAPPING_SCHEMA.md`](docs/MAPPING_SCHEMA.md).
+
 ## `gwaspoker scan`
 
 Works on a local file, a URL or an accession. A local file needs no network.

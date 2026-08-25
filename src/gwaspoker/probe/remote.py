@@ -44,6 +44,7 @@ from gwaspoker.probe.compression import (
 )
 from gwaspoker.probe.encoding import detect_encoding, split_complete_lines
 from gwaspoker.probe.header import HeaderDetectionResult, detect_header
+from gwaspoker.validation.values import ValueStatus, ValueValidationResult, validate_values
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,10 @@ class ProbeResult:
     encoding_confidence: Optional[float] = None
     header: Optional[HeaderDetectionResult] = None
     mapping: Optional[MappingResult] = None
+    #: Whether the sampled values support the concepts the header claimed.
+    #: Kept separate from `mapping` so header evidence and value evidence
+    #: can be measured independently.
+    value_validation: Optional[ValueValidationResult] = None
     error: Optional[str] = None
     failure_category: Optional[FailureCategory] = None
     probe_seconds: float = 0.0
@@ -105,6 +110,13 @@ class ProbeResult:
     @property
     def succeeded(self) -> bool:
         return self.header is not None and self.error is None
+
+    @property
+    def value_status(self) -> ValueStatus:
+        """Overall value-domain status, or NOT_TESTED when nothing was checked."""
+        if self.value_validation is None:
+            return ValueStatus.NOT_TESTED
+        return self.value_validation.overall_status
 
     @property
     def format_label(self) -> str:
@@ -144,6 +156,9 @@ class ProbeResult:
             "decompression": self.decompression.to_dict() if self.decompression else None,
             "header": self.header.to_dict() if self.header else None,
             "mapping": self.mapping.to_dict() if self.mapping else None,
+            "value_validation": (
+                self.value_validation.to_dict() if self.value_validation else None
+            ),
             "succeeded": self.succeeded,
             "error": self.error,
             "failure_category": self.failure_category.value if self.failure_category else None,
@@ -351,6 +366,7 @@ class RemoteProber:
                 complete_lines,
                 encoding=result.encoding,
                 max_scan_lines=self.config.max_header_scan_lines,
+                sample_rows=self.config.sample_rows,
             )
         except HeaderDetectionError as exc:
             result.error = str(exc)
@@ -359,6 +375,15 @@ class RemoteProber:
 
         result.header = header
         result.mapping = get_mapper().map_header(header.raw_header)
+
+        # Second, independent line of evidence: do the sampled values support
+        # the concepts the header names claimed? These rows are already in
+        # memory from the probe prefix, so this costs no extra bytes.
+        result.value_validation = validate_values(
+            result.mapping,
+            header.sample_rows,
+            max_rows=self.config.validation_rows,
+        )
 
 
 def _filename_from_url(url: str) -> str:

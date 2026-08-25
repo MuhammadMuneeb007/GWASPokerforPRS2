@@ -263,11 +263,20 @@ def render_probe(probe: ProbeResult, *, resolved: Any = None, study: Any = None)
     console.print("  " + "  ".join(header.raw_header))
 
     if probe.mapping is not None:
-        render_mapping(probe.mapping)
+        render_mapping(probe.mapping, validation=probe.value_validation)
+    if probe.value_validation is not None:
+        render_value_validation(probe.value_validation)
 
 
-def render_mapping(mapping: Any) -> None:
-    """Print the raw-to-canonical column mapping, in header order."""
+_VALUE_STATUS_STYLE = {"PASS": "green", "WARN": "yellow", "FAIL": "bold red", "NOT_TESTED": "dim"}
+
+
+def render_mapping(mapping: Any, *, validation: Any = None) -> None:
+    """Print the raw-to-canonical column mapping, in header order.
+
+    When value validation ran, its verdict is shown alongside each mapping so
+    the header-derived claim and the value-derived evidence sit side by side.
+    """
     console.print()
     table = Table(title="Canonical column mapping", header_style="bold cyan", box=None)
     table.add_column("#", justify="right", style="dim")
@@ -276,18 +285,24 @@ def render_mapping(mapping: Any) -> None:
     table.add_column("PRS")
     table.add_column("Method")
     table.add_column("Conf.", justify="right")
+    if validation is not None:
+        table.add_column("Values", justify="center")
 
     for index, column in enumerate(mapping.columns):
         resolved = column.canonical_name != "unknown"
-        table.add_row(
+        row = [
             str(index),
             column.raw_name,
             Text(column.canonical_name, style="" if resolved else "dim italic"),
             column.prs_tool_symbol or "",
             column.mapping_method,
             f"{column.confidence:.2f}" if column.confidence else "—",
-            style=None if resolved else "dim",
-        )
+        ]
+        if validation is not None:
+            entry = validation.for_column(column.raw_name)
+            status = entry.status.value if entry else "NOT_TESTED"
+            row.append(Text(status, style=_VALUE_STATUS_STYLE.get(status, "dim")))
+        table.add_row(*row, style=None if resolved else "dim")
     console.print(table)
 
     if mapping.unresolved:
@@ -298,6 +313,45 @@ def render_mapping(mapping: Any) -> None:
             + ("..." if len(mapping.unresolved) > 12 else "")
             + "[/dim]"
         )
+
+
+def render_value_validation(validation: Any) -> None:
+    """Print value-domain findings: what the data says about the header's claim."""
+    problems = [c for c in validation.columns if c.status.value in ("WARN", "FAIL")]
+    if not problems and not validation.cross_column:
+        console.print()
+        console.print(
+            f"[dim]Value validation: [green]{validation.overall_status.value}[/green] "
+            f"over {validation.rows_checked} sampled row(s) "
+            f"(of {validation.available_rows} retained by the probe).[/dim]"
+        )
+        return
+
+    console.print()
+    console.print(
+        f"[bold]Value-domain validation[/bold] [dim]({validation.rows_checked} sampled "
+        f"row(s), overall {validation.overall_status.value})[/dim]"
+    )
+    for entry in problems:
+        style = _VALUE_STATUS_STYLE.get(entry.status.value, "dim")
+        console.print(
+            f"  [{style}]{entry.status.value}[/{style}] {entry.raw_column} "
+            f"[dim](header says {entry.canonical_concept})[/dim]"
+        )
+        if entry.warning:
+            console.print(f"      {entry.warning}")
+        if entry.examples_invalid:
+            console.print(
+                f"      [dim]example values: "
+                f"{', '.join(repr(v) for v in entry.examples_invalid)}[/dim]"
+            )
+        if entry.suggested_concept:
+            console.print(
+                f"      [yellow]Suggested concept: {entry.suggested_concept}[/yellow] "
+                "[dim](reported, not applied)[/dim]"
+            )
+    for finding in validation.cross_column:
+        console.print(f"  [dim]·[/dim] {finding}")
 
 
 # ----------------------------------------------------------------------

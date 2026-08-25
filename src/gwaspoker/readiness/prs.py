@@ -25,7 +25,7 @@ them for readers who are not going to open the source.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Optional
 
 from gwaspoker.mapping.mapper import MappingResult
@@ -45,6 +45,21 @@ UNCERTAIN_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
+class ConditionalOption:
+    """A concept that satisfies a requirement only with supporting companions.
+
+    ``any_of_companions`` is a list of alternative groups: at least one group
+    must be fully present. This exists so the z-score rule can be stated as
+    data rather than as a special case threaded through the evaluator.
+    """
+
+    concept: str
+    requires: tuple[str, ...] = ()
+    any_of_companions: tuple[tuple[str, ...], ...] = ()
+    unmet_note: str = ""
+
+
+@dataclass(frozen=True)
 class Requirement:
     """One requirement, expressed over canonical concept names."""
 
@@ -56,6 +71,10 @@ class Requirement:
     all_of: tuple[str, ...] = ()
     #: An alternative all_of group; the requirement is met if either group is.
     alternative_all_of: tuple[str, ...] = ()
+    #: Concepts that satisfy the requirement only when the companions listed
+    #: alongside them are also present. Used for the z-score: a Z on its own
+    #: is not an effect size, it is a test statistic.
+    conditional: tuple[ConditionalOption, ...] = ()
     note: Optional[str] = None
 
 
@@ -84,9 +103,34 @@ PRS_REQUIRED: tuple[Requirement, ...] = (
     Requirement(
         key="effect_size",
         label="effect size",
-        any_of=("beta", "odds_ratio", "hazard_ratio", "z_score"),
+        # Beta is usable directly. OR and HR are usable after a log transform,
+        # which is a deterministic per-row operation needing nothing else.
+        any_of=("beta", "odds_ratio", "hazard_ratio"),
+        # A z-score is NOT an effect size. It is a test statistic: beta / se.
+        # Recovering an effect from it needs, at minimum, the per-variant sample
+        # size and an allele frequency
+        #     se ~= 1 / sqrt(2 * N * f * (1 - f))
+        #     beta ~= Z * se
+        # Without N and a frequency the Z column cannot yield PRS weights at
+        # all, so it must not satisfy this requirement on its own.
+        conditional=(
+            ConditionalOption(
+                concept="z_score",
+                requires=("sample_size",),
+                any_of_companions=(
+                    ("effect_allele_frequency",),
+                    ("minor_allele_frequency",),
+                    ("allele_frequency",),
+                ),
+                unmet_note=(
+                    "a z-score is a test statistic, not an effect size. Converting it "
+                    "to a beta needs the per-variant sample size and an allele "
+                    "frequency, which this file does not provide"
+                ),
+            ),
+        ),
         note="beta directly; odds/hazard ratios need a log transform; a z-score "
-        "additionally needs allele frequency and sample size",
+        "only with sample size and an allele frequency",
     ),
     Requirement(
         key="significance",
@@ -108,8 +152,13 @@ PRS_RECOMMENDED: tuple[Requirement, ...] = (
     Requirement(
         key="sample_size",
         label="sample size",
-        any_of=("sample_size", "cases", "controls"),
-        note="per-variant N; some methods accept a study-level N instead",
+        # A case count is not a sample size, and neither is a control count.
+        # Either total N is stated, or both arms are, in which case the total is
+        # derivable as their sum -- and the assessment says it was derived.
+        any_of=("sample_size",),
+        all_of=("cases", "controls"),
+        note="total N directly, or cases and controls together; a case count "
+        "alone is not a sample size",
     ),
     Requirement(
         key="allele_frequency",
@@ -165,12 +214,42 @@ def _evaluate_requirement(
         if result is not None and (best is None or result[2] > best[2]):
             best = result
 
+    # Concepts that only count when their companions are present.
+    unmet_conditional: Optional[str] = None
+    for option in requirement.conditional:
+        hit = lookup(option.concept)
+        if hit is None:
+            continue
+        required = check_group(option.requires) if option.requires else ([], [], 1.0)
+        companion = None
+        if option.any_of_companions:
+            for group in option.any_of_companions:
+                companion = check_group(group)
+                if companion is not None:
+                    break
+        else:
+            companion = ([], [], 1.0)
+
+        if required is None or companion is None:
+            # The concept is present but unusable. Record why, and do not let
+            # it satisfy the requirement.
+            unmet_conditional = option.unmet_note or (
+                f"{option.concept} is present but lacks the companions needed to use it"
+            )
+            continue
+
+        columns = [hit[0], *required[0], *companion[0]]
+        concepts = [option.concept, *required[1], *companion[1]]
+        confidence = min(hit[1], required[2], companion[2])
+        if best is None or confidence > best[2]:
+            best = (columns, concepts, confidence)
+
     if best is None:
         return RequirementResult(
             key=requirement.key,
             label=requirement.label,
             status=RequirementStatus.MISSING,
-            note=requirement.note,
+            note=unmet_conditional or requirement.note,
         )
 
     columns, concepts, confidence = best
@@ -181,6 +260,13 @@ def _evaluate_requirement(
     else:
         status = RequirementStatus.MISSING
 
+    note = requirement.note
+    if requirement.key == "sample_size" and set(concepts) == {"cases", "controls"}:
+        note = (
+            "total N was DERIVED as cases + controls; it is not stated directly in "
+            "the file. " + (requirement.note or "")
+        ).strip()
+
     return RequirementResult(
         key=requirement.key,
         label=requirement.label,
@@ -188,7 +274,7 @@ def _evaluate_requirement(
         satisfied_by=tuple(columns),
         canonical_concepts=tuple(concepts),
         confidence=confidence,
-        note=requirement.note,
+        note=note,
     )
 
 
@@ -198,8 +284,29 @@ def assess_from_mapping(
     target: str = "prs",
     evidence_source: str = "file_probe",
     header: tuple[str, ...] = (),
+    validation=None,
 ) -> ReadinessAssessment:
-    """Assess readiness from a mapped header."""
+    """Assess readiness from a mapped header, optionally with value evidence.
+
+    ``validation`` is a
+    :class:`~gwaspoker.validation.values.ValueValidationResult`. When supplied,
+    a column whose sampled values contradict its header mapping cannot count as
+    confidently satisfied:
+
+    ===================================  ====================================
+    Header mapping + value evidence      Outcome
+    ===================================  ====================================
+    strong mapping + PASS                satisfied
+    strong mapping + WARN                satisfied, with the warning surfaced
+    strong mapping + FAIL                downgraded, not confidently satisfied
+    ambiguous/heuristic + WARN or FAIL   uncertain
+    unknown mapping                      stays unknown; never forced
+    ===================================  ====================================
+
+    Both numbers are kept: ``header_confidence`` records what the name alone
+    supported, ``confidence`` records the effective figure after the values had
+    their say. Collapsing them would lose a distinction the manuscript needs.
+    """
     required_rules, recommended_rules = TARGETS.get(target, TARGETS["prs"])
 
     by_concept = mapping.by_concept()
@@ -214,6 +321,10 @@ def assess_from_mapping(
     required = tuple(_evaluate_requirement(r, lookup) for r in required_rules)
     recommended = tuple(_evaluate_requirement(r, lookup) for r in recommended_rules)
 
+    if validation is not None:
+        required = tuple(_apply_value_evidence(r, validation) for r in required)
+        recommended = tuple(_apply_value_evidence(r, validation) for r in recommended)
+
     return _finalize(
         target=target,
         required=required,
@@ -221,7 +332,7 @@ def assess_from_mapping(
         evidence_source=evidence_source,
         header=header or tuple(c.raw_name for c in mapping.columns),
         unmapped=tuple(c.raw_name for c in mapping.unresolved),
-        extra_warnings=_mapping_warnings(mapping, by_concept),
+        extra_warnings=_mapping_warnings(mapping, by_concept) + _validation_warnings(validation),
     )
 
 
@@ -383,3 +494,97 @@ def _finalize(
         unmapped_columns=unmapped,
         confidence=confidence,
     )
+
+
+# ----------------------------------------------------------------------
+# Value evidence
+# ----------------------------------------------------------------------
+
+#: How a value-domain status modifies the header-derived confidence. FAIL is
+#: deliberately severe: it drops the requirement below the "satisfied"
+#: threshold, so a mapping the data contradicts cannot be reported as
+#: confidently met.
+_VALUE_CONFIDENCE_FACTOR = {
+    "PASS": 1.0,
+    "WARN": 0.85,
+    "FAIL": 0.4,
+    "NOT_TESTED": 1.0,
+}
+
+
+def _apply_value_evidence(result: RequirementResult, validation) -> RequirementResult:
+    """Fold sampled-value evidence into one requirement result.
+
+    The header-derived confidence is preserved in ``header_confidence``; the
+    adjusted figure goes to ``confidence``. Nothing is remapped -- a
+    contradiction lowers certainty and adds a note, it does not rewrite the
+    column's concept.
+    """
+    if result.status is RequirementStatus.MISSING or not result.satisfied_by:
+        return result
+
+    statuses: list[str] = []
+    notes: list[str] = []
+    for raw_name in result.satisfied_by:
+        column = validation.for_column(raw_name)
+        if column is None:
+            continue
+        statuses.append(column.status.value)
+        if column.warning:
+            notes.append(f"{raw_name}: {column.warning}")
+
+    if not statuses:
+        return result
+
+    # The weakest column governs: a requirement is only as sound as its
+    # least-supported input.
+    worst = next(
+        candidate for candidate in ("FAIL", "WARN", "NOT_TESTED", "PASS") if candidate in statuses
+    )
+
+    header_confidence = result.confidence
+    adjusted = header_confidence * _VALUE_CONFIDENCE_FACTOR[worst]
+
+    if adjusted >= SATISFIED_THRESHOLD:
+        status = RequirementStatus.SATISFIED
+    elif adjusted >= UNCERTAIN_THRESHOLD:
+        status = RequirementStatus.UNCERTAIN
+    else:
+        status = RequirementStatus.MISSING
+
+    note = result.note
+    if notes:
+        note = "; ".join(notes) + (f". {note}" if note else "")
+
+    return replace(
+        result,
+        status=status,
+        confidence=adjusted,
+        header_confidence=header_confidence,
+        value_status=worst,
+        note=note,
+    )
+
+
+def _validation_warnings(validation) -> tuple[str, ...]:
+    """Surface value-domain contradictions and cross-column findings."""
+    if validation is None:
+        return ()
+
+    warnings: list[str] = []
+    for column in validation.columns:
+        if column.suggested_concept:
+            warnings.append(
+                f"{column.raw_column!r} maps to {column.canonical_concept!r} by header "
+                f"name, but its sampled values look like {column.suggested_concept!r}. "
+                "GWASPoker reports this rather than remapping the column."
+            )
+        elif column.contradicts_header:
+            warnings.append(f"{column.raw_column!r}: {column.warning}")
+        if column.requires_transformation and column.status.value != "NOT_TESTED":
+            warnings.append(
+                f"{column.raw_column!r} needs a downstream transformation: "
+                f"{column.requires_transformation}. GWASPoker does not apply it."
+            )
+    warnings.extend(validation.cross_column)
+    return tuple(warnings)

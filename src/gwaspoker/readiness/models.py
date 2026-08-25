@@ -44,6 +44,12 @@ class RequirementResult:
     canonical_concepts: tuple[str, ...] = ()
     confidence: float = 0.0
     note: Optional[str] = None
+    #: Confidence of the header-derived mapping alone, before value evidence.
+    #: Kept alongside `confidence` so the two can be reported separately.
+    header_confidence: Optional[float] = None
+    #: Value-domain status of the columns satisfying this requirement:
+    #: PASS / WARN / FAIL / NOT_TESTED, or None when no validation ran.
+    value_status: Optional[str] = None
 
     @property
     def is_satisfied(self) -> bool:
@@ -57,6 +63,10 @@ class RequirementResult:
             "satisfied_by": list(self.satisfied_by),
             "canonical_concepts": list(self.canonical_concepts),
             "confidence": round(self.confidence, 3),
+            "header_confidence": (
+                round(self.header_confidence, 3) if self.header_confidence is not None else None
+            ),
+            "value_status": self.value_status,
             "note": self.note,
         }
 
