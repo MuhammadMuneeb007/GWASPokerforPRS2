@@ -70,7 +70,8 @@ def test_invalid_format_choice_is_rejected() -> None:
 def test_scan_rejects_a_target_that_is_neither_file_url_nor_accession() -> None:
     result = runner.invoke(app, ["scan", "definitely not a thing"])
     assert result.exit_code == 1
-    assert "not an existing file" in result.output
+    assert "not a GCST accession" in result.output
+    assert "existing file" in result.output
 
 
 # ----------------------------------------------------------------------

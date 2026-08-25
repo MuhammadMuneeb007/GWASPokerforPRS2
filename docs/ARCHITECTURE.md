@@ -49,6 +49,7 @@ catalog/  probe/   mapping/  readiness/  download/  processing/
 
 | Module | Owns | Never does |
 | --- | --- | --- |
+| `inputs.py` | Classifying a target: accession, direct URL, or local file | Fetch anything |
 | `http.py` | Sessions, retries, rate limiting, Range requests, bounded streaming | Parse anything domain-specific |
 | `catalog/models.py` | The normalized data model | Touch the network |
 | `catalog/rest_api.py` | v2/v1/Solr adapters; JSON to model | Decide anything |
@@ -79,6 +80,7 @@ Three files were added; nothing was removed.
 | `failures.py` | Section 12 of the specification requires structured failure categories. Putting the vocabulary in one module keeps it importable from every layer without a cycle. |
 | `http.py` | The specification requires bounded byte retrieval and forbids shell tools. Concentrating all socket access here is what makes "the parsing modules never see a `Response`" enforceable. |
 | `provenance.py` | Section 23 requires reproducibility metadata on every benchmarkable operation. It is cross-cutting, so it does not belong under `reporting/`. |
+| `inputs.py` | Four commands classify the same three input forms. The logic was duplicated with three different rules, which had produced real inconsistencies (`ftp://` accepted by two commands, rejected by two others). One module, one rule, one test guarding it. |
 
 `reporting/csv.py` and `reporting/json.py` shadow stdlib module names, but only
 inside the `gwaspoker.reporting` package; both import their stdlib counterparts
@@ -177,7 +179,23 @@ GWAS-SSF structured metadata
     vs complete-file retrieval and GWASLab
 ```
 
-### 10. Provenance travels with results
+### 10. One input classifier, not four
+
+`assess`, `probe`, `scan` and `download` all accept an accession, a direct URL
+or (for `scan`) a local path. That classification lives only in `inputs.py`.
+
+The duplication it replaced was not harmless: `discovery.py` accepted `ftp://`
+and then died inside `requests`, which has no FTP adapter, while the `scan` and
+`download` branches in `cli.py` rejected the same string with "neither a GCST
+accession nor an http(s) URL". The shared resolver rewrites `ftp://` to
+`https://`, records the rewrite, and behaves the same everywhere.
+
+`InputTarget.input_type` is carried into reports, CSV and provenance. Only the
+step that produces a URL varies with input type; the probe, header detection,
+mapping, value validation and readiness rules are byte-for-byte the same code.
+A direct URL is not a degraded mode, and it is not an unbounded one.
+
+### 11. Provenance travels with results
 
 Every JSON report carries GWASPoker version, Python version, platform,
 timestamp, the GWAS Catalog data release and EFO version, the full

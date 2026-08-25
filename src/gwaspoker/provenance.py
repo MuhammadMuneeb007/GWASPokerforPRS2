@@ -119,8 +119,14 @@ def assessment_provenance(result: Any) -> dict[str, Any]:
     header = getattr(probe, "header", None) if probe else None
     ssf = getattr(api, "ssf_metadata", None) if api else None
 
+    input_target = getattr(result, "input_target", None)
     payload: dict[str, Any] = {
         "target": getattr(result, "target", None),
+        # Which route located the file. Lets an external-validation experiment
+        # separate GWAS Catalog studies from arbitrary public URLs without
+        # re-parsing the target string afterwards.
+        "input_type": input_target.input_type.value if input_target else None,
+        "input_url": getattr(input_target, "url", None),
         "study_accession": getattr(study, "study_accession", None),
         "reported_trait": getattr(study, "reported_trait", None),
         "api_source": getattr(study, "api_source", None),

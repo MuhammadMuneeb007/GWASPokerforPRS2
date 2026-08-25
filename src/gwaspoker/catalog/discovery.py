@@ -50,7 +50,7 @@ from gwaspoker.catalog.models import (
     ResolvedFile,
     Study,
 )
-from gwaspoker.catalog.rest_api import GwasCatalogClient, is_accession
+from gwaspoker.catalog.rest_api import GwasCatalogClient
 from gwaspoker.catalog.sumstats_api import SSF_MANDATORY_FIELDS, SummaryStatisticsAssessor
 from gwaspoker.config import GWASPokerConfig, get_config
 from gwaspoker.download.resolver import SummaryStatisticsResolver
@@ -63,6 +63,7 @@ from gwaspoker.failures import (
     GWASPokerError,
 )
 from gwaspoker.http import HttpClient
+from gwaspoker.inputs import InputResolutionError, InputTarget, resolve_input
 from gwaspoker.metadata.ancestry import AncestryMatch, match_population
 from gwaspoker.metadata.samples import SampleSizeResolver
 from gwaspoker.probe.remote import ProbeResult, RemoteProber
@@ -200,6 +201,10 @@ class AssessmentResult:
     """The complete outcome of assessing one study or URL."""
 
     target: str
+    #: What the target turned out to be: a GWAS Catalog accession, a direct
+    #: URL, or a local file. Recorded so an external-validation experiment can
+    #: separate catalogue studies from arbitrary public URLs.
+    input_target: Optional[InputTarget] = None
     study: Optional[Study] = None
     api_assessment: Optional[ApiAssessment] = None
     resolved_file: Optional[ResolvedFile] = None
@@ -226,8 +231,9 @@ class AssessmentResult:
         return total
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "target": self.target,
+            "input_type": (self.input_target.input_type.value if self.input_target else None),
             "study": self.study.to_dict() if self.study else None,
             "api_assessment": self.api_assessment.to_dict() if self.api_assessment else None,
             "resolved_file": self.resolved_file.to_dict() if self.resolved_file else None,
@@ -242,6 +248,9 @@ class AssessmentResult:
             "failure_category": self.failure_category.value if self.failure_category else None,
             "notes": list(self.notes),
         }
+        if self.input_target is not None:
+            payload["input"] = self.input_target.to_dict()
+        return payload
 
 
 class DiscoveryService:
@@ -548,28 +557,33 @@ class DiscoveryService:
         probe_bytes: Optional[int] = None,
         skip_api: bool = False,
     ) -> AssessmentResult:
-        """Assess a study accession or a direct URL for PRS readiness."""
+        """Assess a GWAS Catalog accession or a direct summary-statistics URL.
+
+        Everything after the file is located is identical for both: the same
+        bounded probe, the same header detection, mapping, value validation and
+        readiness rules. Only the step that produces a URL differs.
+        """
         started = time.perf_counter()
         result = AssessmentResult(target=target, forced_probe=force_probe)
         harmonised = harmonised or self.config.prefer_harmonised
 
-        if _looks_like_url(target):
-            self._assess_url(result, target, prs_target, probe_bytes)
+        try:
+            resolved_input = resolve_input(target)
+        except InputResolutionError as exc:
+            result.error = str(exc)
+            result.failure_category = exc.category
             result.elapsed_seconds = time.perf_counter() - started
             return result
+        result.input_target = resolved_input
 
-        if not is_accession(target):
-            result.error = (
-                f"{target!r} is neither a GCST accession nor an http(s) URL. "
-                "For a local file use `gwaspoker scan`."
-            )
-            result.failure_category = FailureCategory.INVALID_ACCESSION
+        if resolved_input.is_direct_url:
+            self._assess_url(result, resolved_input.url, prs_target, probe_bytes)
             result.elapsed_seconds = time.perf_counter() - started
             return result
 
         self._assess_accession(
             result,
-            target.upper(),
+            resolved_input.accession,
             prs_target=prs_target,
             harmonised=harmonised,
             force_probe=force_probe,
@@ -586,11 +600,17 @@ class DiscoveryService:
         prs_target: str,
         probe_bytes: Optional[int],
     ) -> None:
-        """A bare URL has no catalogue metadata, so it goes straight to the probe."""
-        result.notes = (
+        """A bare URL has no catalogue metadata, so it goes straight to the probe.
+
+        The probe is still bounded: a direct URL never triggers a full download.
+        """
+        notes = [
             "A direct URL carries no GWAS Catalog metadata, so the structured "
             "assessment route does not apply; the file was probed directly.",
-        )
+        ]
+        if result.input_target is not None and result.input_target.normalisation_note:
+            notes.append(result.input_target.normalisation_note)
+        result.notes = tuple(notes)
         result.probe_required = True
         probe = self.prober.probe_url(url, probe_bytes=probe_bytes)
         result.probe = probe
@@ -740,13 +760,15 @@ class DiscoveryService:
         harmonised: Optional[str] = None,
         probe_bytes: Optional[int] = None,
     ) -> tuple[ProbeResult, Optional[Study], Optional[ResolvedFile]]:
-        """Probe a study accession or a URL without the structured route."""
+        """Probe a GWAS Catalog accession or a direct URL, bounded either way."""
         harmonised = harmonised or self.config.prefer_harmonised
+        resolved_input = resolve_input(target)
 
-        if _looks_like_url(target):
-            return self.prober.probe_url(target, probe_bytes=probe_bytes), None, None
+        if resolved_input.is_direct_url:
+            probe = self.prober.probe_url(resolved_input.url, probe_bytes=probe_bytes)
+            return probe, None, None
 
-        accession = target.upper()
+        accession = resolved_input.accession
         study = self.catalog.get_study(accession)
         resolved = self.resolver.resolve(
             accession,
@@ -755,7 +777,3 @@ class DiscoveryService:
         )
         probe = self.prober.probe_url(resolved.url, probe_bytes=probe_bytes, filename=resolved.name)
         return probe, study, resolved
-
-
-def _looks_like_url(value: str) -> bool:
-    return value.strip().lower().startswith(("http://", "https://", "ftp://"))

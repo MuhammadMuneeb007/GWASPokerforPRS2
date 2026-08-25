@@ -146,6 +146,68 @@ gwaspoker scan downloaded_file.tsv.gz
 
 ---
 
+## Inputs: accession, URL, or local file
+
+Every target-taking command accepts the same three forms. There is no separate
+`assess-url` command.
+
+```bash
+gwaspoker assess GCST90271311                                  # GWAS Catalog accession
+gwaspoker assess https://some-consortium.org/gwas.txt.gz       # direct URL
+gwaspoker scan   ./downloaded.tsv.gz                           # local file (scan only)
+```
+
+**Everything after the file is located is identical.** A direct URL skips the
+GWAS Catalog resolver; it does not skip, shorten or weaken the analysis:
+
+```text
+accession  ─┐
+direct URL ─┼─→ bounded probe → compression → header → mapping
+local file ─┘                 → value validation → PRS readiness → output
+```
+
+A direct URL is still **bounded**: it never triggers a full download.
+`--probe-bytes` is the ceiling either way.
+
+```bash
+gwaspoker assess https://example.org/huge.gz --probe-bytes 262144
+```
+
+`ftp://` URLs are accepted and rewritten to `https://` — the HTTP layer has no
+FTP adapter, and repositories that publish over FTP serve the same paths over
+HTTPS. The rewrite is reported, and the URL you typed is preserved in the
+output.
+
+### The source type is recorded
+
+Reports and provenance carry `input_type`, so an external-validation experiment
+can separate catalogue studies from arbitrary public URLs without re-parsing
+the target string:
+
+```json
+{ "input_type": "direct_url",
+  "input": { "input": "https://example.org/gwas.txt.gz",
+             "url": "https://example.org/gwas.txt.gz",
+             "accession": null } }
+```
+
+```json
+{ "input_type": "gwas_catalog_accession",
+  "input": { "input": "GCST90271311",
+             "accession": "GCST90271311",
+             "url": null } }
+```
+
+Note what differs between the two routes on the *same* file: an accession can
+reach a verdict through the GWAS-SSF sidecar with **zero data bytes**, while a
+direct URL has no catalogue metadata and is probed. Both reach `READY`; the
+`readiness_evidence_source` field records which route produced it.
+
+Classification lives in one module, `inputs.py`, and a test prevents any
+command from reimplementing it.
+
+---
+
 ## `gwaspoker search`
 
 ```bash

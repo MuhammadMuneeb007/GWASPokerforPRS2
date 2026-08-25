@@ -566,21 +566,29 @@ def scan(
     config = _setup(verbose, quiet, config_path, probe_bytes=probe_bytes)
     output_format = _validate_choice(output_format, ("table", "csv", "json"), "--format") or "table"
 
-    from gwaspoker.catalog.rest_api import is_accession
+    from gwaspoker.inputs import InputResolutionError, resolve_input
     from gwaspoker.probe.remote import RemoteProber
     from gwaspoker.readiness.prs import assess_from_mapping
     from gwaspoker.reporting import console as report_console
     from gwaspoker.reporting import csv as report_csv
     from gwaspoker.reporting import json as report_json
 
-    path = Path(target)
     study = None
     resolved = None
 
-    if path.exists():
+    try:
+        resolved_input = resolve_input(target, allow_local=True)
+    except InputResolutionError as exc:
+        report_console.console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    if resolved_input.normalisation_note:
+        report_console.console.print(f"[dim]{resolved_input.normalisation_note}[/dim]")
+
+    if resolved_input.is_local_file:
         prober = RemoteProber(config)
-        result = prober.probe_local(path, probe_bytes=probe_bytes)
-    elif target.lower().startswith(("http://", "https://")) or is_accession(target):
+        result = prober.probe_local(resolved_input.path, probe_bytes=probe_bytes)
+    else:
         from gwaspoker.catalog.discovery import DiscoveryService
 
         with DiscoveryService(config) as service:
@@ -589,11 +597,8 @@ def scan(
             except GWASPokerError as exc:
                 report_console.console.print(f"[red]Scan failed:[/red] {exc}")
                 raise typer.Exit(1) from exc
-    else:
-        report_console.console.print(
-            f"[red]{target!r} is not an existing file, a URL or a GCST accession.[/red]"
-        )
-        raise typer.Exit(1)
+
+    report_console.console.print(f"[dim]Input type: {resolved_input.input_type.label}[/dim]")
 
     report_console.render_probe(result, resolved=resolved, study=study)
 
@@ -602,7 +607,7 @@ def scan(
         readiness = assess_from_mapping(
             result.mapping,
             target=_validate_choice(target_workflow, ("prs",), "--target") or "prs",
-            evidence_source="local_file" if path.exists() else "file_probe",
+            evidence_source=("local_file" if resolved_input.is_local_file else "file_probe"),
             header=result.header.raw_header if result.header else (),
             validation=result.value_validation,
         )
@@ -619,6 +624,7 @@ def scan(
         else:
             payload = report_json.probe_payload(result, study=study, resolved=resolved)
             payload["readiness"] = readiness.to_dict() if readiness else None
+            payload["input"] = resolved_input.to_dict()
             report_json.write_json(payload, output, kind="scan")
         report_console.console.print(f"[green]Wrote[/green] {output}")
 
@@ -709,7 +715,6 @@ def download(
         TransferSpeedColumn,
     )
 
-    from gwaspoker.catalog.rest_api import is_accession
     from gwaspoker.download.downloader import SummaryStatisticsDownloader
     from gwaspoker.download.resolver import SummaryStatisticsResolver
     from gwaspoker.http import HttpClient
@@ -724,16 +729,28 @@ def download(
     downloader = SummaryStatisticsDownloader(config, http)
     resolved = None
 
+    from gwaspoker.inputs import InputResolutionError, resolve_input
+
     try:
-        if target.lower().startswith(("http://", "https://")):
-            url, name, expected = target, None, None
-        elif is_accession(target):
+        try:
+            resolved_input = resolve_input(target)
+        except InputResolutionError as exc:
+            report_console.console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+
+        if resolved_input.normalisation_note:
+            report_console.console.print(f"[dim]{resolved_input.normalisation_note}[/dim]")
+        report_console.console.print(f"[dim]Input type: {resolved_input.input_type.label}[/dim]")
+
+        if resolved_input.is_direct_url:
+            url, name, expected = resolved_input.url, None, None
+        else:
             from gwaspoker.catalog.rest_api import GwasCatalogClient
 
             catalog = GwasCatalogClient(config, http)
-            study = catalog.get_study(target.upper())
+            study = catalog.get_study(resolved_input.accession)
             resolved = resolver.resolve(
-                target.upper(),
+                resolved_input.accession,
                 harmonised=harmonised or config.prefer_harmonised,
                 location_hint=study.summary_statistics_location,
             )
@@ -744,11 +761,6 @@ def download(
             report_console.console.print(f"[bold]Selected:[/bold] {resolved.name}")
             report_console.console.print(f"[dim]{resolved.selection_reason}[/dim]")
             report_console.console.print(f"[bold]Size:[/bold] {human_size(resolved.size_bytes)}")
-        else:
-            report_console.console.print(
-                f"[red]{target!r} is neither a GCST accession nor an http(s) URL.[/red]"
-            )
-            raise typer.Exit(1)
 
         with Progress(
             "[progress.description]{task.description}",
@@ -812,6 +824,7 @@ def download(
     record.add_operation(
         "download",
         {
+            "input": resolved_input.to_dict(),
             "download": result.to_dict(),
             "resolved_file": resolved.to_dict() if resolved else None,
             "gwaslab": gwaslab_result.to_dict() if gwaslab_result else None,

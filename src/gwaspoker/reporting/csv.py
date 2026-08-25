@@ -54,6 +54,9 @@ SEARCH_COLUMNS: tuple[str, ...] = (
 
 #: Columns of ``prs_assessment.csv``.
 ASSESSMENT_COLUMNS: tuple[str, ...] = (
+    "target",
+    "input_type",
+    "input_url",
     "study_accession",
     "reported_trait",
     "ssf_status",
