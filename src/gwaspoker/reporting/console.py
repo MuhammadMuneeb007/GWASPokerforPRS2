@@ -58,6 +58,18 @@ def _boolean(value: Optional[bool], true_label: str = "yes", false_label: str = 
     return Text(true_label, style="green") if value else Text(false_label, style="red")
 
 
+def _tristate(value: Optional[bool]) -> Text:
+    """Compact yes / no / ? for the narrow availability columns.
+
+    ``?`` means the fact could not be established, which is distinct from
+    ``no``. It is never rendered as a blank, because a blank cell reads as
+    "false" to most people.
+    """
+    if value is None:
+        return Text("?", style="dim")
+    return Text("yes", style="green") if value else Text("no", style="red")
+
+
 # ----------------------------------------------------------------------
 # search
 # ----------------------------------------------------------------------
@@ -88,13 +100,22 @@ def render_search_results(
     table.add_column("N", justify="right")
     table.add_column("Cases", justify="right")
     table.add_column("Controls", justify="right")
-    table.add_column("Sum stats", justify="center")
+    # What it takes to actually use this study, at a glance.
+    table.add_column("File", justify="center")
+    table.add_column("API", justify="center")
+    table.add_column("Harmonised", justify="center")
+    table.add_column("GWAS-SSF", justify="center")
     table.add_column("Year", justify="right")
     table.add_column("PMID", justify="right")
 
     for result in results:
         study = result.study
         samples = study.samples
+        file_available = (
+            result.file_available
+            if result.file_available is not None
+            else study.summary_statistics_available
+        )
         table.add_row(
             study.study_accession,
             unknown_or(study.reported_trait),
@@ -102,7 +123,10 @@ def render_search_results(
             _count(samples.total),
             _count(samples.cases),
             _count(samples.controls),
-            _boolean(study.summary_statistics_available),
+            _tristate(file_available),
+            _tristate(result.api_available),
+            _tristate(result.harmonised_available),
+            _tristate(result.is_ssf),
             unknown_or(study.study_year),
             unknown_or(study.pubmed_id),
         )
@@ -110,8 +134,18 @@ def render_search_results(
     console.print(table)
     console.print(
         f"\n[dim]{len(results)} study/studies. "
-        "Sample counts carry provenance; run with --format json to see it.[/dim]"
+        "File = a data file is published · API = GWAS-SSF metadata is retrievable, "
+        "so `assess` needs no probe · Harmonised = a harmonised/ product exists · "
+        "GWAS-SSF = the file declares the standard's column set.[/dim]"
     )
+    console.print("[dim]Sample counts carry provenance; run with --format json to see it.[/dim]")
+
+    unreadable = [r for r in results if r.file_check_error]
+    if unreadable:
+        console.print(
+            f"[dim]{len(unreadable)} study/studies had a published file that could not be "
+            "listed; see the failure summary below.[/dim]"
+        )
 
 
 def render_sample_provenance(results: Iterable[SearchResult]) -> None:

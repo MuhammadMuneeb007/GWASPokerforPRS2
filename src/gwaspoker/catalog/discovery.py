@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from gwaspoker.catalog.models import (
     ApiAssessment,
@@ -59,11 +59,45 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SearchResult:
-    """A study returned by a search, with its ancestry match score."""
+    """A study returned by a search, with what is known about its files.
+
+    The four availability fields answer, at a glance, how much work getting PRS
+    weights out of this study will be:
+
+    ``file_available``
+        A summary-statistics data file exists on the FTP site.
+    ``api_available``
+        The GWAS-SSF ``-meta.yaml`` sidecar is retrievable, so GWASPoker's
+        structured route can describe the file without reading it. This is what
+        predicts whether ``assess`` will need to probe.
+    ``harmonised_available``
+        A ``harmonised/`` product is published alongside the raw submission.
+    ``ssf_status``
+        ``GWAS-SSF`` when the file declares conformance to the standard (and so
+        has a guaranteed mandatory column set), ``pre-GWAS-SSF`` when it does
+        not, ``None`` when it could not be established.
+
+    Each is ``None`` rather than ``False`` when it could not be determined --
+    "not checked" and "checked and absent" are different facts.
+    """
 
     study: Study
     ancestry_match: Optional[AncestryMatch] = None
     matched_traits: tuple[str, ...] = ()
+
+    file_available: Optional[bool] = None
+    api_available: Optional[bool] = None
+    harmonised_available: Optional[bool] = None
+    ssf_status: Optional[str] = None
+    resolved_file: Optional[ResolvedFile] = None
+    file_check_error: Optional[str] = None
+
+    @property
+    def is_ssf(self) -> Optional[bool]:
+        """True/False for the GWAS-SSF column; ``None`` when unestablished."""
+        if self.ssf_status is None:
+            return None
+        return self.ssf_status == "GWAS-SSF"
 
     def to_dict(self) -> dict[str, Any]:
         data = self.study.to_dict()
@@ -71,6 +105,16 @@ class SearchResult:
             data["ancestry_match_score"] = round(self.ancestry_match.score, 3)
             data["ancestry_match_reason"] = self.ancestry_match.reason
         data["matched_traits"] = list(self.matched_traits)
+        data.update(
+            {
+                "file_available": self.file_available,
+                "api_available": self.api_available,
+                "harmonised_available": self.harmonised_available,
+                "ssf_status": self.ssf_status,
+                "resolved_file": self.resolved_file.to_dict() if self.resolved_file else None,
+                "file_check_error": self.file_check_error,
+            }
+        )
         return data
 
 
@@ -161,6 +205,8 @@ class DiscoveryService:
         limit: int = 25,
         summary_stats_only: bool = False,
         resolve_samples: bool = True,
+        check_files: bool = True,
+        progress: Optional[Callable[[int, int, str], None]] = None,
     ) -> list[SearchResult]:
         """Find studies for a phenotype.
 
@@ -168,6 +214,13 @@ class DiscoveryService:
         results are driven by EFO annotation rather than by string similarity.
         Free-text study hits supplement that, catching studies whose *reported*
         trait matches even where the EFO mapping is broader.
+
+        With ``check_files`` (the default) each returned study is also inspected
+        on the FTP site to fill ``file_available``, ``api_available``,
+        ``harmonised_available`` and ``ssf_status``. That costs one directory
+        listing plus one sidecar fetch per study -- roughly a second each -- so
+        it is done **after** filtering and truncation, on the ``limit`` studies
+        that will actually be shown rather than on everything retrieved.
         """
         traits = self.catalog.search_traits(trait, limit=8)
         if traits:
@@ -201,6 +254,7 @@ class DiscoveryService:
 
         results = list(collected.values())
         if resolve_samples:
+            # Cheap: no network unless the LLM fallback is enabled.
             for result in results:
                 self.samples.resolve(result.study)
 
@@ -215,7 +269,71 @@ class DiscoveryService:
             ),
             reverse=True,
         )
-        return results[:limit]
+        results = results[:limit]
+
+        if check_files:
+            for index, result in enumerate(results, start=1):
+                if progress is not None:
+                    progress(index, len(results), result.study.study_accession)
+                self._check_file_availability(result)
+
+        return results
+
+    def _check_file_availability(self, result: SearchResult) -> None:
+        """Fill the availability fields for one study.
+
+        Costs one FTP directory listing plus, when a sidecar exists, one small
+        metadata fetch. Failures are recorded on the result and never raised:
+        a study whose files cannot be listed still belongs in the table, marked
+        as such.
+        """
+        study = result.study
+        accession = study.study_accession
+
+        if study.summary_statistics_available is False:
+            # The Catalog says this study publishes only top associations.
+            # There is no directory to list, so nothing further is unknown.
+            result.file_available = False
+            result.api_available = False
+            result.harmonised_available = False
+            return
+
+        try:
+            resolved = self.resolver.resolve(
+                accession,
+                harmonised="auto",
+                location_hint=study.summary_statistics_location,
+            )
+        except (FileResolutionError, GWASPokerError) as exc:
+            result.file_available = False
+            result.file_check_error = str(exc)
+            FAILURES.record_exception("search_file_check", exc, study=accession)
+            return
+
+        result.resolved_file = resolved
+        result.file_available = True
+        result.harmonised_available = any(c.is_harmonised for c in resolved.candidates)
+        if not study.summary_statistics_location:
+            study.summary_statistics_location = resolved.directory_url
+
+        if not resolved.metadata_url:
+            # No GWAS-SSF sidecar: the structured route cannot describe this
+            # file, so `assess` will have to probe it.
+            result.api_available = False
+            return
+
+        meta = self.sumstats.fetch_ssf_metadata(resolved.metadata_url)
+        if meta is None:
+            result.api_available = False
+            return
+
+        result.api_available = True
+        result.ssf_status = meta.ssf_status
+        if meta.genome_assembly and not study.genome_build:
+            study.genome_build = meta.genome_assembly
+        # The sidecar often carries authoritative sample counts; now that we
+        # have it, let it improve on whatever regex extraction produced.
+        self.samples.resolve(study, ssf_metadata=meta)
 
     def _add_result(
         self,

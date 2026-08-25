@@ -133,6 +133,13 @@ def search(
     summary_stats_only: bool = typer.Option(
         False, "--sumstats-only", help="Only studies with full summary statistics."
     ),
+    check_files: bool = typer.Option(
+        True,
+        "--check-files/--no-check-files",
+        help="Look up File / API / Harmonised / GWAS-SSF availability for each "
+        "result. Costs about a second per study; --no-check-files leaves those "
+        "columns as '?' and returns immediately.",
+    ),
     llm: bool = typer.Option(
         False, "--llm/--no-llm", help="Allow the ELECTRA fallback for unresolved sample counts."
     ),
@@ -158,6 +165,8 @@ def search(
         _validate_choice(output_format, ("table", "csv", "json", "html"), "--format") or "table"
     )
 
+    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+
     from gwaspoker.catalog.discovery import DiscoveryService
     from gwaspoker.provenance import build_provenance
     from gwaspoker.reporting import console as report_console
@@ -167,12 +176,32 @@ def search(
 
     with DiscoveryService(config, enable_llm=llm) as service:
         try:
-            results = service.search(
-                trait,
-                population=population,
-                limit=limit,
-                summary_stats_only=summary_stats_only,
-            )
+            # File availability costs a directory listing plus a sidecar fetch
+            # per study, so the run is long enough to need a progress bar.
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                TimeRemainingColumn(),
+                console=report_console.console,
+                disable=quiet or not check_files,
+                transient=True,
+            ) as bar:
+                task = bar.add_task("Checking published files", total=limit)
+
+                def on_progress(index: int, total: int, accession: str) -> None:
+                    bar.update(
+                        task, completed=index, total=total, description=f"Checking {accession}"
+                    )
+
+                results = service.search(
+                    trait,
+                    population=population,
+                    limit=limit,
+                    summary_stats_only=summary_stats_only,
+                    check_files=check_files,
+                    progress=on_progress if check_files else None,
+                )
         except GWASPokerError as exc:
             report_console.console.print(f"[red]Search failed:[/red] {exc}")
             raise typer.Exit(1) from exc
