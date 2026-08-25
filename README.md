@@ -155,60 +155,74 @@ gwaspoker search --trait "coronary artery disease" --limit 50
 ```
 
 ```text
+Retrieved 6 study/studies.
+Excluded 4 matching 'Gene-based burden' (pass --no-default-excludes to keep them).
+
 GWAS Catalog studies for migraine in European
-GCST          Trait                          Population        N   Cases  Controls  File  API  Harmonised  GWAS-SSF  Year      PMID
-GCST90473326  ICD10 G43: Migraine            European    458,440  25,393   433,047  yes   yes     yes        yes     2025  40770095
-GCST90083812  ICD10 G43.9: Migraine,         European    387,898   3,383   384,515  yes   yes      no         no     2021  34662886
-              unspecified (Gene-based
-              burden)
-GCST90079826  ICD10 G43.9: Migraine,         European    387,898   3,383   384,515  yes   yes     yes         no     2021  34662886
-              unspecified
-GCST90079827  ICD10 G43: Migraine            European    378,172   8,426   369,746  yes   yes     yes         no     2021  34662886
-GCST90671940  Migraine                       European    341,050  10,881   330,169  yes   yes      no        yes     2022  35115687
-GCST90081731  Migraine (Gene-based burden)   European    331,754  14,131   317,623  yes   yes      no         no     2021  34662886
+GCST          Trait                  Population        N   Cases  Controls  File  SSF Meta  Harmonised  GWAS-SSF   PRS   Probe  Year      PMID
+GCST90473326  ICD10 G43: Migraine    European    458,440  25,393   433,047  yes     yes        yes        yes     READY   no   2025  40770095
+GCST90079826  ICD10 G43.9: Migraine  European    387,898   3,383   384,515  yes     yes        yes         no       ?     yes  2021  34662886
+GCST90079827  ICD10 G43: Migraine    European    378,172   8,426   369,746  yes     yes        yes         no       ?     yes  2021  34662886
+GCST90671940  Migraine               European    341,050  10,881   330,169  yes     yes         no        yes     READY   no   2022  35115687
+GCST90077745  Migraine               European    331,754  14,131   317,623  yes     yes        yes         no       ?     yes  2021  34662886
 ```
 
-Four columns say what it will take to actually use each study:
+Six columns say what it will take to actually use each study:
 
 | Column | Means |
 | --- | --- |
 | **File** | A summary-statistics data file is published |
-| **API** | The GWAS-SSF `-meta.yaml` sidecar is retrievable, so the structured route can describe the file and `assess` needs **no probe** |
+| **SSF Meta** | The GWAS-SSF `-meta.yaml` sidecar is retrievable. This is a **static metadata file served over HTTP, not an API** |
 | **Harmonised** | A `harmonised/` product is published alongside the raw submission |
-| **GWAS-SSF** | The file declares conformance to GWAS-SSF v1.0, so its mandatory column set is guaranteed |
+| **GWAS-SSF** | The file *declares* conformance to GWAS-SSF v1.0, so its mandatory column set is guaranteed |
+| **PRS** | The readiness verdict derivable from that declaration alone |
+| **Probe** | Whether bytes must be read from the data file to reach a verdict |
 
-Each is `yes`, `no`, or `?` when the fact could not be established. `?` is never
-rendered as a blank — a blank cell reads as "no" to most people, and the two are
-different facts.
+Read the first row: `GCST90473326` declares GWAS-SSF, so **PRS is READY and no
+probe is required** — `gwaspoker assess` will return a verdict having
+transferred no data at all. Row two has a perfectly readable sidecar
+(`SSF Meta = yes`) but declares `pre-GWAS-SSF`, so nothing is guaranteed about
+its columns and a probe *is* required.
 
-Reading the table above: `GCST90473326` is the best candidate — it has a file, a
-readable sidecar, a harmonised product, *and* declares GWAS-SSF, so `assess` will
-return a verdict without transferring any data. The `(Gene-based burden)` studies
-have no harmonised product, so they will need liftover if your genotypes are on a
-different build.
+That distinction matters: **a retrievable sidecar does not mean the probe can be
+skipped.** Only a GWAS-SSF declaration settles it. `PRS = READY` exactly when
+`GWAS-SSF = yes`, and `Probe` is its inverse — the columns are shown separately
+because they answer the two questions a user actually asks.
 
-These four columns cost one FTP directory listing plus one sidecar fetch per
-study — about a second each. Pass `--no-check-files` to skip them (they show `?`)
-when you only want the trait and sample counts:
+Every value is `yes`, `no`, or `?`. `?` means the fact could not be established,
+which is **not** the same as `no`: a network timeout leaves the columns `?` and
+records a failure category, never a fabricated negative.
+
+Studies whose reported trait contains "Gene-based burden" are excluded by
+default — they aggregate variants to a gene, so they are not variant-level
+summary statistics and cannot yield PRS weights at all (the Catalog labels them
+`file_type: non-GWAS-SSF`). The count excluded is always printed.
 
 ```bash
-gwaspoker search --trait migraine --no-check-files    # returns immediately
+gwaspoker search --trait migraine --no-default-excludes    # keep them
+gwaspoker search --trait migraine --exclude "time to event" --exclude "MTAG"
 ```
 
-Trait resolution goes through the GWAS Catalog's own ontology index, so results
-follow EFO annotation. This replaces v1's fixed fuzzy-similarity threshold over
-a spreadsheet you had to download by hand.
+### Cost
 
-Every study reports `study_accession`, reported and mapped traits with EFO ids,
-PMID, summary-statistics availability and location, ancestry, initial and
-replication sample descriptions, N / cases / controls **with provenance**,
-genome build where known, year, and which API answered. Anything unavailable is
-`unknown` — never fabricated, never a plausible-looking zero.
+These columns need two or three requests per study — a directory listing, often
+a second listing for `harmonised/`, and the sidecar fetch. The stage runs on a
+thread pool; measured on 24 studies:
+
+| Workers | Elapsed | Per study |
+| --- | --- | --- |
+| 1 | 22.8 s | 0.95 s |
+| 6 (default) | **9.7 s** | 0.41 s |
+| 10 | 9.0 s | 0.37 s |
+
+The speedup flattens after ~6 workers because the process-wide rate limiter
+(8 requests/second by default) becomes the binding constraint, not latency.
+Concurrency overlaps waiting; it does not raise the request rate. For 300
+studies expect roughly two minutes.
 
 ```bash
-gwaspoker search --trait migraine --output search_results.csv --format csv
-gwaspoker search --trait migraine --output search_results.json --format json
-gwaspoker search --trait migraine --show-provenance
+gwaspoker search --trait migraine --workers 8
+gwaspoker search --trait migraine --no-check-files   # skip the stage entirely
 ```
 
 ---

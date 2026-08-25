@@ -11,8 +11,11 @@ Eight commands, built on Typer:
 ``run``        search, assess and rank in one pass
 ``benchmark``  score predictions against curated ground truth
 
-Every command supports ``-v`` / ``-vv`` / ``--quiet``, and every command that
-produces results supports ``--format`` and ``--output``.
+Every command supports ``-v`` / ``-vv`` / ``--quiet``. Commands that produce
+results support ``--format`` and ``--output``, and the two are independent:
+``--format`` chooses the representation, ``--output`` only chooses the
+destination. Without ``--output`` a non-table format is written to stdout so it
+can be piped.
 """
 
 from __future__ import annotations

@@ -53,7 +53,7 @@ catalog/  probe/   mapping/  readiness/  download/  processing/
 | `catalog/models.py` | The normalized data model | Touch the network |
 | `catalog/rest_api.py` | v2/v1/Solr adapters; JSON to model | Decide anything |
 | `catalog/sumstats_api.py` | GWAS-SSF sidecars; the withdrawn API's status | Read data files |
-| `catalog/discovery.py` | The API-first workflow | Format output |
+| `catalog/discovery.py` | The metadata-first workflow | Format output |
 | `metadata/` | Sample counts, ancestry, optional QA model | Network I/O beyond what it is given |
 | `probe/` | Bytes to header: compression, encoding, header scoring | Know what a study is |
 | `mapping/` | Raw names to canonical concepts | Judge PRS suitability |
@@ -157,7 +157,27 @@ six core dependencies. The QA pipeline is cached per process
 (`functools.lru_cache`); v1 rebuilt a 335 M-parameter model three times per
 study.
 
-### 9. Provenance travels with results
+### 9. "Metadata-first", not "API-first"
+
+The GWAS Catalog REST API answers questions about *studies*. It does not
+describe a summary-statistics file's columns: the raw v1 study response has 19
+keys and not one of them mentions harmonisation, file type or SSF status. The
+Summary Statistics API that once served association records is withdrawn
+(HTTP 410), and the Catalog states that API access to the full genome-wide
+collection is being redeveloped.
+
+So the structured route GWASPoker uses is the GWAS-SSF ``-meta.yaml`` sidecar --
+a static file served over HTTP alongside the data, not an API. The code, the
+CLI columns (`SSF Meta`, not `API`) and the manuscript all say so. The central
+comparison is:
+
+```text
+GWAS-SSF structured metadata
+    vs GWASPoker bounded raw-file probing
+    vs complete-file retrieval and GWASLab
+```
+
+### 10. Provenance travels with results
 
 Every JSON report carries GWASPoker version, Python version, platform,
 timestamp, the GWAS Catalog data release and EFO version, the full

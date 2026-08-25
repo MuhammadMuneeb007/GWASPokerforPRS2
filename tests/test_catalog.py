@@ -527,7 +527,7 @@ def test_file_check_populates_all_four_columns(service, fixture_text) -> None:
     service._check_file_availability(result)
 
     assert result.file_available is True
-    assert result.api_available is True
+    assert result.metadata_available is True
     assert result.harmonised_available is True
     assert result.ssf_status == "GWAS-SSF"
     assert result.is_ssf is True
@@ -549,7 +549,7 @@ def test_pre_ssf_file_reports_ssf_false(service, fixture_text) -> None:
     service._check_file_availability(result)
 
     assert result.file_available is True
-    assert result.api_available is True
+    assert result.metadata_available is True
     assert result.harmonised_available is False
     assert result.ssf_status == "pre-GWAS-SSF"
     assert result.is_ssf is False
@@ -574,7 +574,7 @@ def test_missing_sidecar_gives_api_false_and_ssf_unknown(service) -> None:
     service._check_file_availability(result)
 
     assert result.file_available is True
-    assert result.api_available is False
+    assert result.metadata_available is False
     assert result.ssf_status is None
     assert result.is_ssf is None
 
@@ -588,14 +588,14 @@ def test_study_without_summary_statistics_costs_no_requests(service) -> None:
     service._check_file_availability(result)
 
     assert result.file_available is False
-    assert result.api_available is False
+    assert result.metadata_available is False
     assert result.harmonised_available is False
     assert result.ssf_status is None
 
 
 @responses.activate
-def test_unlistable_directory_is_recorded_not_raised(service) -> None:
-    """A study the Catalog says has a file, but whose directory 404s."""
+def test_directory_404_is_a_definite_absence(service) -> None:
+    """A 404 genuinely means the directory is not there, so False is correct."""
     responses.add(responses.GET, STUDY_DIR, status=404)
 
     result = _search_result()
@@ -603,11 +603,45 @@ def test_unlistable_directory_is_recorded_not_raised(service) -> None:
 
     assert result.file_available is False
     assert result.file_check_error
-    assert result.api_available is None  # never established, not "absent"
+    assert result.file_check_category in ("file_not_found", "http_404")
 
     from gwaspoker.failures import FAILURES
 
     assert len(FAILURES) == 1
+
+
+@responses.activate
+def test_network_failure_is_unknown_not_absent(service) -> None:
+    """A timeout or 5xx must never be recorded as "checked, no file".
+
+    These columns feed a manuscript dataset. Turning a transient network fault
+    into a negative measurement would put a fabricated result into it, so every
+    field stays None and the failure category is recorded instead.
+    """
+    import requests
+
+    responses.add(responses.GET, STUDY_DIR, body=requests.exceptions.ConnectTimeout("timed out"))
+
+    result = _search_result()
+    service._check_file_availability(result)
+
+    assert result.file_available is None
+    assert result.metadata_available is None
+    assert result.harmonised_available is None
+    assert result.probe_needed is None
+    assert result.file_check_error
+    assert result.file_check_category == "network_timeout"
+
+
+@responses.activate
+def test_server_error_is_unknown_not_absent(service) -> None:
+    responses.add(responses.GET, STUDY_DIR, status=503)
+
+    result = _search_result()
+    service._check_file_availability(result)
+
+    assert result.file_available is None
+    assert result.file_check_category not in ("file_not_found", "http_404")
 
 
 @responses.activate
@@ -637,16 +671,60 @@ def test_sidecar_improves_sample_counts(service, fixture_text) -> None:
 def test_search_result_serialises_the_new_fields() -> None:
     result = _search_result()
     result.file_available = True
-    result.api_available = False
+    result.metadata_available = True
     result.harmonised_available = True
     result.ssf_status = "pre-GWAS-SSF"
 
     payload = result.to_dict()
     assert payload["file_available"] is True
-    assert payload["api_available"] is False
+    assert payload["metadata_available"] is True
     assert payload["harmonised_available"] is True
     assert payload["ssf_status"] == "pre-GWAS-SSF"
+    # A retrievable sidecar does NOT mean the probe can be skipped.
+    assert payload["prs_from_metadata"] is None
+    assert payload["probe_needed"] is True
     json.dumps(payload, default=str)
+
+
+def test_metadata_available_does_not_imply_no_probe() -> None:
+    """The bug this rename exists to prevent.
+
+    The old column was called "API" and its footnote said a retrievable sidecar
+    meant ``assess`` needed no probe. That is false: only a GWAS-SSF
+    *declaration* settles the column set. A pre- or non-GWAS-SSF file has a
+    perfectly readable sidecar and still has to be probed.
+    """
+    for status in ("pre-GWAS-SSF", "non-GWAS-SSF"):
+        result = _search_result()
+        result.file_available = True
+        result.metadata_available = True
+        result.ssf_status = status
+
+        assert result.is_ssf is False
+        assert result.prs_from_metadata is None
+        assert result.probe_needed is True
+
+
+def test_ssf_declaration_means_no_probe_and_ready() -> None:
+    result = _search_result()
+    result.file_available = True
+    result.metadata_available = True
+    result.ssf_status = "GWAS-SSF"
+
+    assert result.is_ssf is True
+    assert result.prs_from_metadata == "READY"
+    assert result.probe_needed is False
+
+
+def test_probe_needed_is_none_without_a_file() -> None:
+    """Nothing to probe, so the question does not arise."""
+    result = _search_result()
+    result.file_available = False
+    assert result.probe_needed is None
+
+    unknown = _search_result()
+    assert unknown.file_available is None
+    assert unknown.probe_needed is None
 
 
 def test_ssf_status_preserves_the_declared_string() -> None:
@@ -679,3 +757,114 @@ def test_non_ssf_declaration_is_not_sufficient(service, fixture_text) -> None:
     meta = parse_ssf_metadata(text)
     assert meta.ssf_status == "non-GWAS-SSF"
     assert not meta.is_ssf
+
+
+# ----------------------------------------------------------------------
+# Parallel file checking and exclusion
+# ----------------------------------------------------------------------
+
+
+def test_check_files_runs_every_study(service, monkeypatch) -> None:
+    """Concurrency must not drop or duplicate work."""
+    seen: list[str] = []
+    lock = __import__("threading").Lock()
+
+    def fake_check(result):
+        with lock:
+            seen.append(result.study.study_accession)
+
+    monkeypatch.setattr(service, "_check_file_availability", fake_check)
+    results = [_search_result(study_accession=f"GCST{i:08d}") for i in range(25)]
+
+    service.check_files(results, workers=6)
+
+    assert sorted(seen) == sorted(r.study.study_accession for r in results)
+    assert len(seen) == len(set(seen))
+
+
+def test_check_files_progress_counts_monotonically(service, monkeypatch) -> None:
+    monkeypatch.setattr(service, "_check_file_availability", lambda _r: None)
+    results = [_search_result(study_accession=f"GCST{i:08d}") for i in range(12)]
+
+    counts: list[int] = []
+    service.check_files(results, workers=4, progress=lambda done, _total, _acc: counts.append(done))
+
+    assert counts == sorted(counts)
+    assert counts[-1] == 12
+
+
+def test_check_files_single_worker_is_sequential(service, monkeypatch) -> None:
+    monkeypatch.setattr(service, "_check_file_availability", lambda _r: None)
+    results = [_search_result(study_accession=f"GCST{i:08d}") for i in range(4)]
+    assert service.check_files(results, workers=1) == results
+
+
+def test_check_files_on_empty_list(service) -> None:
+    assert service.check_files([]) == []
+
+
+def test_one_failing_study_does_not_abort_the_rest(service, monkeypatch) -> None:
+    """A failure in one worker must not lose the other results."""
+    done: list[str] = []
+
+    def flaky(result):
+        if result.study.study_accession.endswith("3"):
+            raise RuntimeError("boom")
+        done.append(result.study.study_accession)
+
+    monkeypatch.setattr(service, "_check_file_availability", flaky)
+    results = [_search_result(study_accession=f"GCST{i:08d}") for i in range(6)]
+
+    with pytest.raises(RuntimeError):
+        service.check_files(results, workers=3)
+    # The others still ran rather than being cancelled silently.
+    assert len(done) >= 4
+
+
+def test_http_client_gives_each_thread_its_own_session(config) -> None:
+    """`requests.Session` is not documented as thread-safe."""
+    import threading
+
+    from gwaspoker.http import HttpClient
+
+    client = HttpClient(config)
+    sessions = []
+    lock = threading.Lock()
+
+    def grab() -> None:
+        with lock:
+            sessions.append(id(client._session))
+
+    threads = [threading.Thread(target=grab) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(set(sessions)) == 5, "threads shared a session"
+    client.close()
+
+
+def test_http_client_close_is_idempotent(config) -> None:
+    from gwaspoker.http import HttpClient
+
+    client = HttpClient(config)
+    _ = client._session
+    client.close()
+    client.close()
+
+
+# ----------------------------------------------------------------------
+# Trait exclusion
+# ----------------------------------------------------------------------
+
+
+def test_matches_any() -> None:
+    from gwaspoker.catalog.discovery import _matches_any
+
+    assert _matches_any("Migraine (Gene-based burden)", ["Gene-based burden"])
+    assert _matches_any("MIGRAINE (GENE-BASED BURDEN)", ["gene-based burden"])
+    assert not _matches_any("Migraine", ["Gene-based burden"])
+    assert not _matches_any(None, ["anything"])
+    assert not _matches_any("Migraine", [])
+    assert not _matches_any("Migraine", ["   "])

@@ -360,13 +360,13 @@ def test_search_csv_carries_the_availability_columns(tmp_path) -> None:
     from gwaspoker.catalog.models import Study
     from gwaspoker.reporting.csv import SEARCH_COLUMNS, write_search_csv
 
-    for column in ("file_available", "api_available", "harmonised_available", "ssf_status"):
+    for column in ("file_available", "metadata_available", "harmonised_available", "ssf_status"):
         assert column in SEARCH_COLUMNS
 
     result = SearchResult(
         study=Study(study_accession="GCST1", reported_trait="Migraine"),
         file_available=True,
-        api_available=True,
+        metadata_available=True,
         harmonised_available=False,
         ssf_status="GWAS-SSF",
     )
@@ -390,14 +390,14 @@ def test_search_table_renders_yes_no_question(capsys) -> None:
         SearchResult(
             study=Study(study_accession="GCST1", reported_trait="Migraine"),
             file_available=True,
-            api_available=True,
+            metadata_available=True,
             harmonised_available=True,
             ssf_status="GWAS-SSF",
         ),
         SearchResult(
             study=Study(study_accession="GCST2", reported_trait="Migraine"),
             file_available=True,
-            api_available=False,
+            metadata_available=False,
             harmonised_available=False,
             ssf_status=None,
         ),

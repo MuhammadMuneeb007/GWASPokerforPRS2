@@ -1,13 +1,17 @@
-"""Study discovery and the API-first assessment workflow.
+"""Study discovery and the metadata-first assessment workflow.
 
 This module is the orchestration layer. It owns the decision the whole tool
 exists to make:
 
 .. code-block:: text
 
-    study metadata (REST v2 -> v1)
+    GWAS Catalog REST API  (v2, falling back to v1)
               |
-    structured assessment (GWAS-SSF meta.yaml; legacy sumstats API status)
+    study / trait discovery
+              |
+    GWAS-SSF sidecar metadata   (a static -meta.yaml file, ~700 bytes)
+              |
+    structured file assessment
               |
         sufficient? --- yes --> verdict, zero data bytes transferred
               |
@@ -16,6 +20,14 @@ exists to make:
     bounded remote probe (Range: bytes=0-N)
               |
           verdict
+
+A note on naming. This is deliberately **not** called "API-first". The GWAS
+Catalog REST API answers questions about *studies*; it says nothing about a
+summary-statistics file's columns. The Summary Statistics API that once did is
+withdrawn (HTTP 410), and the Catalog states that API access to the full
+genome-wide collection is being redeveloped. The structured route GWASPoker
+actually uses is the GWAS-SSF ``-meta.yaml`` sidecar -- a static file on the
+repository, not an API -- so the code and the manuscript say so.
 
 ``--force-probe`` runs the probe even when the structured route was sufficient,
 which is what makes the two routes comparable in the benchmark.
