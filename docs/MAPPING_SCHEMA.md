@@ -112,6 +112,13 @@ everywhere, so a report never shows a name that is not in the user's file.
   `base_pair_location`, `effect_allele_freq`, `standard_error`, `odds_ratio`,
   `hazard_ratio` (0.78–0.80).
 
+Suffix rules match at a **word boundary**: the leading underscore is part of
+the pattern and survives normalization. Without that, `_or` matches the tail of
+any word ending in those two letters — which is how the CSS fragment
+`span{background-color:` in an HTML response was mapped to an odds ratio. The
+same slip made `FreqSE` a standard error. Boundary-anchored, `trait_OR` still
+resolves and `background_color` does not.
+
 Every mapping returns `raw_name`, `canonical_name`, `mapping_method` and
 `confidence`. An unresolved column is reported as `unknown` and listed in
 `unidentified_columns` — it is **never** forced onto a concept.
@@ -153,6 +160,32 @@ carry a note. Value validation then confirms or challenges them.
 | `ALT` | `effect_allele` (0.95) | `alternate_allele` (0.75) | ALT is a **VCF coordinate convention** — the non-reference allele at the site. Many GWAS files do use it as the effect allele, but that is a per-source convention, not a rule. |
 | `REF` | `other_allele` (0.95) | `reference_allele` (0.75) | Likewise. Note that LDSC maps `REFERENCE_ALLELE` to A1, the *effect* allele, while VCF semantics put REF opposite ALT. Sources genuinely disagree, which is why GWASPoker refuses to resolve it from the header. |
 | `ID`, `NAME`, `MARKER`, `VAR_NAME` | `variant_id` (0.95) | `variant_id` (0.75) | Generic column names. They usually do hold an identifier, but `ID` is equally at home holding a row number. The values decide. |
+
+### Aliases added from external files
+
+An external run over 768 heterogeneous URLs surfaced column names that are
+common outside the GWAS Catalog. Each was added only after confirming its
+meaning from the tool that emits it, not from its resemblance to a known name.
+
+| Alias | Concept | Source |
+| --- | --- | --- |
+| `P.2gc`, `SE.2gc` | `p_value`, `standard_error` | double genomic-control correction, standard in GIANT/METAL consortium releases |
+| `GWAS_P` | `p_value` | multi-analysis files distinguishing the GWAS column from others |
+| `n_total_sum` | `sample_size` | METAL's summed N across contributing cohorts |
+| `FreqAllele1HapMapCEU`, `eaf_hapmapceu` | `effect_allele_frequency` | frequency of allele 1 in the HapMap CEU reference — allele 1 is the effect allele in these files |
+| `mach_r2`, `mach_rsq` | `info_score` | MaCH/minimac imputation quality |
+
+### Deliberately left unmapped
+
+Not mapping a column is a result, not a gap. These recur in external files and
+stay `unknown` on purpose:
+
+| Column | Why not |
+| --- | --- |
+| `FreqSE`, `MinFreq`, `MaxFreq` | METAL's *dispersion* of the frequency across cohorts, not a frequency. `FreqSE` is not a standard error of an effect. |
+| `Overall`, `Direction` | Per-cohort direction strings (`+-+?`), not an effect size. |
+| `P_BMD`, `P_LM`, `beta_BMD`, `beta_LM` | The file holds more than one analysis. A blanket `P_*` rule would map both to `p_value`, and taking the highest-confidence one would silently pick a phenotype. Until there is an explicit policy for choosing the primary analysis, GWASPoker reports the ambiguity instead of resolving it. |
+| `SNP_hg18`, `SNP_hg19` | Build-specific position strings; which build is wanted is the caller's decision. |
 
 `A1` and `A2` keep full 0.95 confidence: A1-as-effect-allele is near-universal
 in PRS-facing tooling (PLINK, METAL, LDSC and PRSice all read it that way), so

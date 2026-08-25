@@ -28,7 +28,7 @@ import zipfile
 import zlib
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from gwaspoker.failures import CompressionError, FailureCategory
 
@@ -109,13 +109,14 @@ _EXTENSIONS: tuple[tuple[str, Compression], ...] = (
 )
 
 
-def detect_compression(data: bytes, filename: str = "") -> Compression:
-    """Identify the container from magic bytes, with the filename as a tiebreaker.
+def detect_compression_by_magic(data: bytes, filename: str = "") -> Optional[Compression]:
+    """Compression identified from the bytes alone, or ``None``.
 
-    Magic bytes win over the extension: files served as ``.tsv`` that are in fact
-    gzipped are common in the Catalog's older submissions.
+    This is the only *evidence-based* detector. The filename is consulted only
+    to choose between ``.gz`` and ``.tar.gz`` once gzip magic has already been
+    confirmed, never to claim compression that the bytes do not show.
     """
-    lowered = filename.lower().rstrip("/")
+    lowered = (filename or "").lower().rstrip("/")
 
     for magic, compression in _MAGIC:
         if data.startswith(magic):
@@ -129,10 +130,36 @@ def detect_compression(data: bytes, filename: str = "") -> Compression:
 
     if _looks_like_tar(data):
         return Compression.TAR
+    return None
 
+
+def detect_compression(data: bytes, filename: str = "") -> Compression:
+    """Identify the container, preferring magic bytes over the filename.
+
+    An external run over 768 heterogeneous URLs produced 111 gzip and 29 ZIP
+    "decompression errors" that were mostly not broken archives at all: they
+    were share pages and moved files whose URLs still ended in ``.gz``. Trusting
+    the extension enough to invoke a decompressor turned "this is not the file"
+    into "this file is corrupt".
+
+    So the extension is now a **hint of last resort**. Callers that need to
+    distinguish "no compression detected" from "the extension lied" should use
+    :func:`detect_compression_by_magic` together with
+    :func:`~gwaspoker.probe.payload.classify_payload_prefix`, which
+    :meth:`~gwaspoker.probe.remote.RemoteProber._interpret` does.
+    """
+    magic = detect_compression_by_magic(data, filename)
+    if magic is not None:
+        return magic
+
+    lowered = (filename or "").lower().rstrip("/")
     for suffix, compression in _EXTENSIONS:
         if lowered.endswith(suffix):
-            logger.debug("No magic bytes matched; using extension hint %s", suffix)
+            logger.debug(
+                "No magic bytes matched %s; falling back to the %s extension hint",
+                filename,
+                suffix,
+            )
             return compression
 
     return Compression.NONE
@@ -299,31 +326,189 @@ def _read_zip_member(data: bytes, max_output: int) -> DecompressionResult:
 
 
 def _read_zip_local_header(data: bytes, max_output: int) -> DecompressionResult:
-    """Inflate the first member using only its local file header."""
-    if len(data) < 30 or not data.startswith(b"PK\x03\x04"):
+    """Read the first *data-like* member using only local file headers.
+
+    Zip keeps its index (the central directory) at the **end** of the archive,
+    which a bounded prefix does not contain, so member selection has to be done
+    by walking the chain of local headers from the front.
+
+    This used to take the first member unconditionally. Real archives routinely
+    put something else there -- a ``__MACOSX/`` entry, a directory record, a
+    README, a manuscript PDF -- so the probe would score documentation prose as
+    a header and report the file as having no recognisable columns. The walk
+    below skips those and reports how many it passed.
+    """
+    if len(data) < 30 or not data.startswith(_ZIP_LOCAL_SIG):
         raise CompressionError(
             "Zip prefix is too short to contain a local file header",
             category=FailureCategory.DECOMPRESSION_ERROR,
         )
-    method = int.from_bytes(data[8:10], "little")
-    name_len = int.from_bytes(data[26:28], "little")
-    extra_len = int.from_bytes(data[28:30], "little")
-    name_end = 30 + name_len
-    name = data[30:name_end].decode("utf-8", errors="replace")
-    body = data[name_end + extra_len :]
+    return _walk_zip_prefix(data, max_output)
 
-    if method == 0:  # stored
+
+class _ZipLocalHeader(NamedTuple):
+    """The fields of a local file header that member selection needs."""
+
+    name: str
+    method: int
+    #: ``None`` when the header defers sizes to a trailing data descriptor
+    #: (general-purpose bit 3), which is common for zips written to a stream.
+    compressed_size: Optional[int]
+    body_start: int
+
+
+def _zip64_compressed_size(extra: bytes, uncompressed_is_zip64: bool) -> Optional[int]:
+    """Pull the 64-bit compressed size out of the Zip64 extra field.
+
+    The Zip64 record lists only the fields that overflowed, in a fixed order
+    (uncompressed, then compressed), so the offset of the compressed size
+    depends on whether the uncompressed size also overflowed.
+    """
+    pos = 0
+    while pos + 4 <= len(extra):
+        field_id = int.from_bytes(extra[pos : pos + 2], "little")
+        field_len = int.from_bytes(extra[pos + 2 : pos + 4], "little")
+        payload = extra[pos + 4 : pos + 4 + field_len]
+        if field_id == _ZIP64_EXTRA_ID:
+            start = 8 if uncompressed_is_zip64 else 0
+            if len(payload) >= start + 8:
+                return int.from_bytes(payload[start : start + 8], "little")
+            return None
+        pos += 4 + field_len
+    return None
+
+
+def _parse_zip_local_header(data: bytes, offset: int) -> Optional[_ZipLocalHeader]:
+    """Decode one local file header, or return ``None`` if there isn't one."""
+    if offset < 0 or offset + 30 > len(data):
+        return None
+    if data[offset : offset + 4] != _ZIP_LOCAL_SIG:
+        return None
+
+    flags = int.from_bytes(data[offset + 6 : offset + 8], "little")
+    method = int.from_bytes(data[offset + 8 : offset + 10], "little")
+    compressed = int.from_bytes(data[offset + 18 : offset + 22], "little")
+    uncompressed = int.from_bytes(data[offset + 22 : offset + 26], "little")
+    name_len = int.from_bytes(data[offset + 26 : offset + 28], "little")
+    extra_len = int.from_bytes(data[offset + 28 : offset + 30], "little")
+
+    if not 0 < name_len <= _ZIP_MAX_NAME_LENGTH or extra_len > _ZIP_MAX_EXTRA_LENGTH:
+        return None
+
+    name_end = offset + 30 + name_len
+    if name_end > len(data):
+        return None
+    raw_name = data[offset + 30 : name_end]
+    if any(byte < 0x20 for byte in raw_name):
+        return None
+    name = raw_name.decode("utf-8", errors="replace")
+
+    if compressed == 0xFFFFFFFF:
+        extra = data[name_end : name_end + extra_len]
+        compressed = _zip64_compressed_size(extra, uncompressed == 0xFFFFFFFF) or compressed
+
+    # Bit 3 means "sizes follow the data", so the header's zero is not a size.
+    streamed = bool(flags & 0x08) and compressed == 0
+    return _ZipLocalHeader(
+        name=name,
+        method=method,
+        compressed_size=None if streamed else compressed,
+        body_start=name_end + extra_len,
+    )
+
+
+def _find_next_zip_header(data: bytes, start: int) -> Optional[int]:
+    """Scan forward for the next plausible local header.
+
+    Needed only when a member's size was deferred to a data descriptor and so
+    cannot be skipped arithmetically. The signature can occur by chance inside
+    compressed bytes, so each hit is re-parsed and rejected unless its fields
+    are self-consistent.
+    """
+    pos = start
+    while 0 <= pos < len(data):
+        pos = data.find(_ZIP_LOCAL_SIG, pos)
+        if pos < 0:
+            return None
+        if _parse_zip_local_header(data, pos) is not None:
+            return pos
+        pos += 4
+    return None
+
+
+def _walk_zip_prefix(data: bytes, max_output: int) -> DecompressionResult:
+    """Follow the local-header chain to the first member worth reading."""
+    offset: Optional[int] = 0
+    skipped: list[str] = []
+    fallback: Optional[_ZipLocalHeader] = None
+
+    for _ in range(_ZIP_MAX_MEMBERS_WALKED):
+        if offset is None:
+            break
+        header = _parse_zip_local_header(data, offset)
+        if header is None:
+            break
+
+        if not _is_archive_directory(header.name) and not _is_archive_noise(header.name):
+            if fallback is None:
+                fallback = header
+            return _inflate_zip_member(data, header, max_output, skipped)
+
+        skipped.append(header.name)
+        if header.compressed_size:
+            offset = header.body_start + header.compressed_size
+        elif header.compressed_size == 0 and _is_archive_directory(header.name):
+            offset = header.body_start
+        else:
+            offset = _find_next_zip_header(data, max(header.body_start, offset + 4))
+
+    if fallback is not None:
+        return _inflate_zip_member(data, fallback, max_output, skipped)
+
+    if skipped:
+        raise CompressionError(
+            "The zip prefix contains only non-data members "
+            f"({', '.join(skipped[:5])}); the summary statistics, if present, "
+            "start beyond the probe boundary. Increase --probe-bytes to reach them.",
+            category=FailureCategory.UNSUPPORTED_FORMAT,
+        )
+    raise CompressionError(
+        "No readable member was found in the zip prefix",
+        category=FailureCategory.DECOMPRESSION_ERROR,
+    )
+
+
+def _inflate_zip_member(
+    data: bytes,
+    header: _ZipLocalHeader,
+    max_output: int,
+    skipped: list[str],
+) -> DecompressionResult:
+    """Decode one member's payload out of the prefix."""
+    body = data[header.body_start :]
+    if header.compressed_size is not None:
+        body = body[: header.compressed_size]
+    truncated = header.compressed_size is None or len(body) < header.compressed_size
+
+    notes: list[str] = []
+    if skipped:
+        notes.append(f"walked {len(skipped)} non-data member(s) to reach {header.name!r}")
+
+    if header.method == _ZIP_STORED:
+        payload = body[:max_output]
+        notes.append("stored (uncompressed) zip member read from the local header")
         return DecompressionResult(
             compression=Compression.ZIP,
-            data=body[:max_output],
-            complete=False,
-            member_name=name,
-            note="stored (uncompressed) zip member read from the local header",
+            data=payload,
+            complete=not truncated and len(payload) >= len(body),
+            member_name=header.name,
+            note="; ".join(notes) or None,
             compressed_bytes_consumed=len(data),
         )
-    if method != 8:  # deflate
+
+    if header.method != _ZIP_DEFLATED:
         raise CompressionError(
-            f"Zip compression method {method} is not supported from a prefix",
+            f"Zip compression method {header.method} is not supported from a prefix",
             category=FailureCategory.UNSUPPORTED_COMPRESSION,
         )
 
@@ -331,12 +516,21 @@ def _read_zip_local_header(data: bytes, max_output: int) -> DecompressionResult:
         payload = zlib.decompressobj(-15).decompress(body, max_output)
     except zlib.error as exc:
         raise CompressionError(f"Zip member could not be inflated: {exc}") from exc
+
+    if not payload and not body:
+        raise CompressionError(
+            f"Zip member {header.name!r} starts beyond the probe boundary; "
+            "increase --probe-bytes to reach it",
+            category=FailureCategory.TRUNCATED_PROBE,
+        )
+
+    notes.append("inflated from the local file header; central directory not in prefix")
     return DecompressionResult(
         compression=Compression.ZIP,
         data=payload,
         complete=False,
-        member_name=name,
-        note="inflated from the local file header; central directory not in prefix",
+        member_name=header.name,
+        note="; ".join(notes),
         compressed_bytes_consumed=len(data),
     )
 
@@ -363,20 +557,114 @@ def _read_tar_member(data: bytes, max_output: int) -> DecompressionResult:
     except tarfile.TarError:
         logger.debug("Tar index incomplete in prefix; reading the first header block")
 
-    # Fall back to the first 512-byte header block, which a prefix does contain.
+    # Walk the member headers ourselves. A prefix has no archive index, but it
+    # does contain a chain of 512-byte headers, and each states its own size.
+    return _walk_tar_prefix(data, max_output)
+
+
+#: Tar typeflags that are not a regular data file.
+#: ``5`` directory, ``1``/``2`` links, ``x``/``g`` PAX metadata,
+#: ``L``/``K`` GNU long name/link, ``V`` volume label.
+_TAR_SKIP_TYPEFLAGS = frozenset(b"1234567xgLKV")
+
+
+def _parse_tar_octal(field: bytes) -> int:
+    """Parse a tar numeric field. Returns 0 for the many malformed variants."""
+    text = field.split(b"\x00")[0].split(b" ")[0].strip()
+    if not text:
+        return 0
+    try:
+        return int(text, 8)
+    except ValueError:
+        return 0
+
+
+def _walk_tar_prefix(data: bytes, max_output: int) -> DecompressionResult:
+    """Find the first real data member in a truncated tar stream.
+
+    The previous implementation skipped exactly one 512-byte header and treated
+    whatever followed as the payload. That is right only when the first member
+    is the data file. It is wrong when the archive opens with a directory entry,
+    a PAX extended header, a GNU long-name record or a ``._``-prefixed macOS
+    resource fork -- which is common, and which is why 36 valid ``ustar``
+    archives in the external run failed to yield their headers even though the
+    bytes were present.
+
+    This walks the header chain instead, honouring each member's declared size,
+    and returns the first member that is a regular file with a data-like name.
+    """
     if len(data) < 512:
         raise CompressionError(
             "Tar prefix is shorter than one header block",
             category=FailureCategory.DECOMPRESSION_ERROR,
         )
-    name = data[:100].rstrip(b"\x00").decode("utf-8", errors="replace")
-    payload = data[512 : 512 + max_output]
-    return DecompressionResult(
-        compression=Compression.TAR,
-        data=payload,
-        complete=False,
-        member_name=name or None,
-        note="read from the first tar header block; archive index not in prefix",
+
+    offset = 0
+    skipped: list[str] = []
+    fallback: Optional[tuple[str, int, int]] = None  # name, start, size
+
+    while offset + 512 <= len(data):
+        header = data[offset : offset + 512]
+        if header == b"\x00" * 512:  # end-of-archive marker
+            break
+
+        name = header[:100].split(b"\x00")[0].decode("utf-8", errors="replace")
+        if not name:
+            break
+
+        size = _parse_tar_octal(header[124:136])
+        typeflag = header[156:157]
+        start = offset + 512
+        # Members are padded to a 512-byte boundary.
+        advance = 512 + ((size + 511) // 512) * 512
+
+        is_regular = typeflag in (b"0", b"\x00", b"") or typeflag not in _TAR_SKIP_TYPEFLAGS
+        noisy = _is_archive_noise(name)
+
+        if is_regular and size > 0 and not noisy:
+            if _pick_archive_member([name]) == name:
+                payload = data[start : start + min(size, max_output)]
+                return DecompressionResult(
+                    compression=Compression.TAR,
+                    data=payload,
+                    complete=len(payload) >= size,
+                    member_name=name,
+                    note=(
+                        f"walked {len(skipped)} non-data member(s) to reach {name!r}"
+                        if skipped
+                        else None
+                    ),
+                )
+            if fallback is None:
+                fallback = (name, start, size)
+        else:
+            skipped.append(name)
+
+        if advance <= 0:
+            break
+        offset += advance
+
+    # No member matched a known data extension. Use the first regular file we
+    # saw rather than giving up -- an extensionless member is still readable.
+    if fallback is not None:
+        name, start, size = fallback
+        payload = data[start : start + min(size, max_output)]
+        return DecompressionResult(
+            compression=Compression.TAR,
+            data=payload,
+            complete=len(payload) >= size,
+            member_name=name,
+            note=(
+                f"no member carried a known data extension; using the first regular "
+                f"file {name!r}"
+                + (f" after skipping {len(skipped)} metadata member(s)" if skipped else "")
+            ),
+        )
+
+    raise CompressionError(
+        "No regular data member was found in the tar prefix"
+        + (f" (skipped: {', '.join(skipped[:5])})" if skipped else ""),
+        category=FailureCategory.UNSUPPORTED_FORMAT,
     )
 
 
@@ -448,6 +736,18 @@ def _decompress_zstd(data: bytes, max_output: int) -> DecompressionResult:
 
 
 #: Extensions that plausibly hold summary statistics, in preference order.
+#: Zip structural signatures and header limits used when walking a prefix.
+_ZIP_LOCAL_SIG = b"PK\x03\x04"
+_ZIP64_EXTRA_ID = 0x0001
+_ZIP_STORED = 0
+_ZIP_DEFLATED = 8
+#: Sanity bounds for rejecting a signature that occurred by chance inside
+#: compressed bytes rather than at a real header.
+_ZIP_MAX_NAME_LENGTH = 4096
+_ZIP_MAX_EXTRA_LENGTH = 65535
+#: A prefix that needs more hops than this is not going to yield data usefully.
+_ZIP_MAX_MEMBERS_WALKED = 64
+
 _DATA_EXTENSIONS: tuple[str, ...] = (
     ".tsv",
     ".txt",
@@ -465,20 +765,85 @@ _DATA_EXTENSIONS: tuple[str, ...] = (
 )
 
 #: Members that are never the data file.
-_ARCHIVE_NOISE: tuple[str, ...] = (
+#: Extensions that are never summary statistics. Matched with ``endswith`` (and
+#: tolerating a trailing ``.gz``), not with ``in``: a substring test would reject
+#: ``study.results.txt`` for containing ``.r``.
+_ARCHIVE_NOISE_EXTENSIONS: tuple[str, ...] = (
     ".pdf",
     ".png",
     ".jpg",
     ".jpeg",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".svg",
+    ".bmp",
     ".xlsx",
+    ".xls",
     ".doc",
     ".docx",
+    ".ppt",
+    ".pptx",
     ".md5",
+    ".sha256",
+    ".html",
+    ".htm",
+    ".xml",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".log",
+    ".bib",
+    ".r",
+    ".py",
+    ".sh",
+    ".pl",
+    ".zip",
+    ".bam",
+    ".bai",
+    ".vcf",
+    ".idx",
+    ".tbi",
+)
+
+#: Name fragments that mark a member as documentation or filesystem litter.
+#: Matched anywhere in the path, because these appear with many extensions
+#: (``README``, ``README.txt``, ``docs/readme.md``).
+_ARCHIVE_NOISE_NAMES: tuple[str, ...] = (
     "readme",
     "license",
+    "licence",
+    "copying",
+    "changelog",
+    "manifest",
     "__macosx",
     ".ds_store",
+    "thumbs.db",
 )
+
+#: Retained as the union of both lists for callers that only need one sequence.
+_ARCHIVE_NOISE: tuple[str, ...] = _ARCHIVE_NOISE_EXTENSIONS + _ARCHIVE_NOISE_NAMES
+
+
+def _is_archive_noise(name: str) -> bool:
+    """True when an archive member is documentation, media or filesystem litter.
+
+    v1 selected the largest member of an archive, which picks the bundled
+    manuscript PDF whenever one is present. Selecting by name instead means the
+    choice is explainable, and a wrong choice is visible in ``member_name``.
+    """
+    lowered = name.lower().rstrip("/")
+    if not lowered:
+        return True
+    if any(fragment in lowered for fragment in _ARCHIVE_NOISE_NAMES):
+        return True
+    stem = lowered[:-3] if lowered.endswith(".gz") else lowered
+    return stem.endswith(_ARCHIVE_NOISE_EXTENSIONS)
+
+
+def _is_archive_directory(name: str) -> bool:
+    """True for directory entries, which carry no payload."""
+    return name.endswith("/") or name.endswith("\\")
 
 
 def _pick_archive_member(names: list[str]) -> Optional[str]:
@@ -488,11 +853,7 @@ def _pick_archive_member(names: list[str]) -> Optional[str]:
     Directory entries and macOS resource forks are excluded. v1 instead took the
     largest member, which selects a bundled PDF when one is present.
     """
-    candidates = [
-        n
-        for n in names
-        if not n.endswith("/") and not any(noise in n.lower() for noise in _ARCHIVE_NOISE)
-    ]
+    candidates = [n for n in names if not _is_archive_directory(n) and not _is_archive_noise(n)]
     if not candidates:
         return None
     for extension in _DATA_EXTENSIONS:

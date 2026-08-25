@@ -54,6 +54,16 @@ class FailureCategory(str, Enum):
     RANGE_NOT_SUPPORTED = "range_not_supported"
 
     # --- File inspection ------------------------------------------------
+    #: The server returned a web page, an XML document, or another non-data
+    #: payload. Distinct from a broken archive: the transfer succeeded and the
+    #: bytes are intact, they simply are not summary statistics. A URL ending
+    #: `.gz` that answers `text/html` is almost always a share/landing page.
+    NON_DATA_RESPONSE = "non_data_response"
+    #: The filename extension and the actual bytes disagree -- a `.gz` whose
+    #: magic bytes are not gzip, for instance. Distinct from
+    #: DECOMPRESSION_ERROR, which means a genuine compressed stream failed to
+    #: decode.
+    CONTENT_MISMATCH = "content_mismatch"
     UNSUPPORTED_COMPRESSION = "unsupported_compression"
     UNSUPPORTED_FORMAT = "unsupported_format"
     DECOMPRESSION_ERROR = "decompression_error"

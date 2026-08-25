@@ -45,7 +45,16 @@ class _RateLimiter:
 class HttpResult:
     """A completed HTTP exchange, with the timing the manuscript needs."""
 
-    __slots__ = ("url", "status_code", "headers", "content", "elapsed_seconds", "from_range")
+    __slots__ = (
+        "url",
+        "requested_url",
+        "status_code",
+        "headers",
+        "content",
+        "elapsed_seconds",
+        "from_range",
+        "redirect_count",
+    )
 
     def __init__(
         self,
@@ -55,13 +64,37 @@ class HttpResult:
         content: bytes,
         elapsed_seconds: float,
         from_range: bool = False,
+        requested_url: Optional[str] = None,
+        redirect_count: int = 0,
     ) -> None:
+        #: Where the response actually came from, after redirects.
         self.url = url
+        #: What we asked for. Differs from `url` for share links and movers.
+        self.requested_url = requested_url or url
         self.status_code = status_code
         self.headers = headers
         self.content = content
         self.elapsed_seconds = elapsed_seconds
         self.from_range = from_range
+        self.redirect_count = redirect_count
+
+    @property
+    def was_redirected(self) -> bool:
+        return self.url != self.requested_url
+
+    @property
+    def content_type(self) -> Optional[str]:
+        for key, value in self.headers.items():
+            if key.lower() == "content-type":
+                return value.split(";", 1)[0].strip().lower()
+        return None
+
+    @property
+    def content_disposition(self) -> Optional[str]:
+        for key, value in self.headers.items():
+            if key.lower() == "content-disposition":
+                return value
+        return None
 
     @property
     def ok(self) -> bool:
@@ -165,11 +198,13 @@ class HttpClient:
         logger.debug("GET %s -> %s (%.3fs)", response.url, response.status_code, elapsed)
         return HttpResult(
             url=response.url,
+            requested_url=url,
             status_code=response.status_code,
             headers=dict(response.headers),
             content=response.content,
             elapsed_seconds=elapsed,
             from_range=response.status_code == 206,
+            redirect_count=len(response.history),
         )
 
     def get_json(
@@ -206,10 +241,12 @@ class HttpClient:
         logger.debug("HEAD %s -> %s (%.3fs)", response.url, response.status_code, elapsed)
         return HttpResult(
             url=response.url,
+            requested_url=url,
             status_code=response.status_code,
             headers=dict(response.headers),
             content=b"",
             elapsed_seconds=elapsed,
+            redirect_count=len(response.history),
         )
 
     def get_range(self, url: str, *, start: int = 0, length: int = 65_536) -> HttpResult:
@@ -240,6 +277,11 @@ class HttpClient:
             content = bytes(buffer[:length])
             status = response.status_code
             headers = dict(response.headers)
+            # A share link that 302s to a landing page is the single most common
+            # cause of "decompression error" on a .gz URL, so record where the
+            # bytes actually came from.
+            final_url = response.url
+            redirects = len(response.history)
             response.close()
         except requests.exceptions.RequestException as exc:
             raise RemoteAccessError(
@@ -256,12 +298,14 @@ class HttpClient:
             elapsed,
         )
         return HttpResult(
-            url=url,
+            url=final_url,
+            requested_url=url,
             status_code=status,
             headers=headers,
             content=content,
             elapsed_seconds=elapsed,
             from_range=status == 206,
+            redirect_count=redirects,
         )
 
     def stream_bounded(self, url: str, *, limit: int) -> HttpResult:
@@ -285,6 +329,8 @@ class HttpClient:
             content = bytes(buffer[:limit])
             status = response.status_code
             headers = dict(response.headers)
+            final_url = response.url
+            redirects = len(response.history)
             response.close()
         except requests.exceptions.RequestException as exc:
             raise RemoteAccessError(
@@ -292,12 +338,14 @@ class HttpClient:
             ) from exc
         elapsed = time.perf_counter() - started
         return HttpResult(
-            url=url,
+            url=final_url,
+            requested_url=url,
             status_code=status,
             headers=headers,
             content=content,
             elapsed_seconds=elapsed,
             from_range=False,
+            redirect_count=redirects,
         )
 
     def iter_download(

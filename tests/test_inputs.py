@@ -118,12 +118,17 @@ def test_a_url_is_never_mistaken_for_a_path(tmp_path) -> None:
 # ----------------------------------------------------------------------
 
 
-def test_ftp_urls_are_rewritten_to_https() -> None:
-    """requests has no FTP adapter, and repositories serve the same paths over HTTPS.
+def test_ftp_urls_are_rewritten_for_verified_mirrors_only() -> None:
+    """requests has no FTP adapter, so ftp:// must be rewritten or refused.
 
     Before the shared resolver, ``assess`` and ``probe`` accepted ``ftp://`` and
     then died inside requests with ``InvalidSchema``, while ``download`` and
     ``scan`` rejected it outright.
+
+    The rewrite is now host-aware. ``ftp://host/path`` does not universally
+    imply ``https://host/path``: many FTP servers have no HTTP front end, and
+    guessing one would send the probe to a URL the user never supplied, turning
+    "unsupported scheme" into a misleading 404.
     """
     target = resolve_input("ftp://ftp.ebi.ac.uk/pub/databases/gwas/x.tsv.gz")
 
@@ -141,12 +146,94 @@ def test_https_urls_are_left_alone() -> None:
     assert note is None
 
 
+def test_ftp_on_an_unverified_host_is_refused_not_guessed() -> None:
+    """Silently rewriting an arbitrary FTP host would fetch a URL nobody asked for."""
+    with pytest.raises(InputResolutionError) as excinfo:
+        resolve_input("ftp://some-random-lab.example.org/gwas.gz")
+    message = str(excinfo.value)
+    assert "no FTP adapter" in message
+    assert "FTP_HTTPS_MIRRORS" in message  # tells the user how to proceed
+
+
+def test_ftp_mirror_subdomains_are_recognised() -> None:
+    target = resolve_input("ftp://ftp.ebi.ac.uk/pub/x.gz")
+    assert target.url.startswith("https://ftp.ebi.ac.uk/")
+
+
 def test_every_resolved_url_uses_a_fetchable_scheme() -> None:
     from urllib.parse import urlparse
 
-    for value in (URL, "http://example.org/x.gz", "ftp://example.org/x.gz"):
+    for value in (URL, "http://example.org/x.gz", "ftp://ftp.ebi.ac.uk/pub/x.gz"):
         resolved = resolve_input(value)
         assert urlparse(resolved.url).scheme in FETCHABLE_SCHEMES
+
+
+def test_normalisation_is_recorded_as_a_named_rule() -> None:
+    """A supplementary table must be able to say which URLs were altered, and why."""
+    target = resolve_input("ftp://ftp.ebi.ac.uk/pub/x.gz")
+    payload = target.to_dict()
+    assert payload["normalisation_rule"] == "ftp_https_mirror"
+    assert payload["original_url"].startswith("ftp://")
+    assert payload["url"].startswith("https://")
+
+
+def test_unrewritten_urls_carry_no_rule() -> None:
+    payload = resolve_input(URL).to_dict()
+    assert payload["normalisation_rule"] is None
+    assert payload["original_url"] == payload["url"]
+
+
+# ----------------------------------------------------------------------
+# Share links
+# ----------------------------------------------------------------------
+
+
+def test_dropbox_share_links_become_direct_downloads() -> None:
+    """A Dropbox link ending .zip returns text/html unless dl=1 is set.
+
+    That is why such URLs were previously reported as ZIP decompression errors:
+    the bytes really were not a ZIP, because they were a preview page.
+    """
+    target = resolve_input("https://www.dropbox.com/s/abc123/gwas.zip?dl=0")
+    assert "dl=1" in target.url
+    assert target.normalisation_rule == "dropbox_direct_download"
+    assert target.normalisation_note
+
+
+def test_dropbox_links_without_a_dl_parameter_get_one() -> None:
+    target = resolve_input("https://www.dropbox.com/s/abc123/gwas.zip")
+    assert target.url.endswith("dl=1")
+
+
+def test_already_direct_dropbox_links_are_untouched() -> None:
+    url = "https://www.dropbox.com/s/abc123/gwas.zip?dl=1"
+    target = resolve_input(url)
+    assert target.url == url
+    assert target.normalisation_rule is None
+
+
+def test_unknown_hosts_are_not_rewritten() -> None:
+    from gwaspoker.url_resolvers import resolve_public_share_url
+
+    resolved = resolve_public_share_url("https://example.org/gwas.zip?dl=0")
+    assert not resolved.was_rewritten
+    assert resolved.rule is None
+
+
+def test_only_dropbox_is_implemented() -> None:
+    """Providers we have no failing examples for are deliberately absent.
+
+    Adding speculative rewrite rules for OneDrive/SharePoint/Drive would be
+    untestable against real behaviour and would rot as their APIs change.
+    """
+    from gwaspoker.url_resolvers import resolve_public_share_url
+
+    for host in (
+        "https://onedrive.live.com/download?id=1",
+        "https://drive.google.com/file/d/abc/view",
+        "https://example.sharepoint.com/x/gwas.zip",
+    ):
+        assert not resolve_public_share_url(host).was_rewritten
 
 
 # ----------------------------------------------------------------------

@@ -50,12 +50,14 @@ catalog/  probe/   mapping/  readiness/  download/  processing/
 | Module | Owns | Never does |
 | --- | --- | --- |
 | `inputs.py` | Classifying a target: accession, direct URL, or local file | Fetch anything |
+| `url_resolvers.py` | Host-specific share-link rewrites (Dropbox `dl=1`) | Fetch anything |
 | `http.py` | Sessions, retries, rate limiting, Range requests, bounded streaming | Parse anything domain-specific |
 | `catalog/models.py` | The normalized data model | Touch the network |
 | `catalog/rest_api.py` | v2/v1/Solr adapters; JSON to model | Decide anything |
 | `catalog/sumstats_api.py` | GWAS-SSF sidecars; the withdrawn API's status | Read data files |
 | `catalog/discovery.py` | The metadata-first workflow | Format output |
 | `metadata/` | Sample counts, ancestry, optional QA model | Network I/O beyond what it is given |
+| `probe/payload.py` | Is this payload data at all? (markup, content-type, magic) | Decompress or parse |
 | `probe/` | Bytes to header: compression, encoding, header scoring | Know what a study is |
 | `mapping/` | Raw names to canonical concepts | Judge PRS suitability |
 | `readiness/` | Concepts to a verdict | Know where the columns came from |
@@ -195,6 +197,53 @@ step that produces a URL varies with input type; the probe, header detection,
 mapping, value validation and readiness rules are byte-for-byte the same code.
 A direct URL is not a degraded mode, and it is not an unbounded one.
 
+### 12. Classify the payload before trying to decode it
+
+An external run over 768 heterogeneous URLs reported 111 "gzip decompression"
+and 29 "ZIP decompression" failures. Almost none of them were decompression
+failures. The URLs ended in `.gz` or `.zip`, but the servers returned an HTML
+landing page, an S3 `NoSuchKey` XML document, or a share-link preview. Nothing
+was corrupt; the bytes were never the file.
+
+`probe/payload.py` now runs *before* decompression and answers one question:
+is this a data payload at all? It weighs evidence in a fixed order, strongest
+first:
+
+1. **magic bytes** — real gzip/zip/bzip2 framing settles it, and outranks a
+   content-type header, because servers mislabel `.gz` as `text/html` often;
+2. **markup sniffing** — a `<!doctype html`, `<?xml`, or three or more tags in
+   the first 2 KB;
+3. **content-type** — `text/html`, `application/json`, `image/*` and friends.
+   `application/octet-stream` is explicitly *not* evidence: it means "bytes";
+4. **extension mismatch** — a `.gz` with no gzip magic is `CONTENT_MISMATCH`,
+   not a corrupt archive; it is usually plain text under a misleading name, and
+   is read as such.
+
+The result is a distinct failure category (`non_data_response`,
+`content_mismatch`) and a message that points at the URL rather than the file.
+Getting this wrong was not merely a bad label: markup was reaching the header
+scorer, where a CSS fragment such as `span{background-color:` scored as an odds
+ratio column.
+
+### 13. Archives are walked, not sampled
+
+Both tar and zip put things in front of the data: directory records, PAX and
+GNU extension headers, `__MACOSX/` resource forks, READMEs, the manuscript PDF.
+The prefix parsers used to read the first member, which is how 36 archives
+containing valid data reported no header.
+
+Both now walk the member chain, skip non-data members by name, and report how
+many they passed in `member_name`/`note`. Zip is the harder case, because the
+central directory lives at the *end* of the archive — past every probe
+boundary — so selection has to work from local file headers alone, including
+Zip64 sizes and the streamed form where sizes are deferred to a trailing data
+descriptor. When only noise is reachable within the probe, GWASPoker says so
+and suggests a larger `--probe-bytes`, rather than scoring documentation prose.
+
+v1's rule — take the largest member — selects the PDF whenever one is bundled.
+
+---
+
 ### 11. Provenance travels with results
 
 Every JSON report carries GWASPoker version, Python version, platform,
@@ -220,8 +269,9 @@ cli.assess
         - sufficient iff file_type == "GWAS-SSF v1.0"
      4a. sufficient   -> assess_from_declared_fields         0 data bytes
      4b. insufficient -> RemoteProber.probe_url              <= probe_bytes
-         - HEAD: size, Accept-Ranges
-         - GET Range: bytes=0-N  (or bounded stream)
+         - HEAD: size, Accept-Ranges          (advisory; failure is not fatal)
+         - GET Range: bytes=0-N  (or bounded stream on 4xx/no Accept-Ranges)
+         - classify_payload_prefix -> DATA | NON_DATA | CONTENT_MISMATCH
          - detect_compression -> decompress_prefix
          - detect_encoding    -> split_complete_lines
          - detect_header      -> ColumnMapper.map_header
@@ -246,6 +296,14 @@ probe route on a file of any size.
 * a failure never returns a plausible-looking value;
 * transient and permanent failures are distinct categories
   (`api_error` vs `api_deprecated` vs `not_represented`);
+* a wrong *payload* and a broken *file* are distinct categories:
+  `non_data_response` (the server returned a page, not the file) and
+  `content_mismatch` (the extension disagrees with the bytes) are never
+  reported as `decompression_error`;
+* 403, 404 and 410 are terminal — no fallback method is attempted, because a
+  second request cannot change the answer. Every other status falls through
+  HEAD -> Range GET -> bounded GET, and each attempt is recorded with its
+  status, byte count and duration;
 * non-fatal failures accumulate in a process-wide `FailureLog`, are summarised
   at the end of a run, and go to `--failure-log` as JSON Lines.
 
@@ -255,14 +313,21 @@ probe route on a file of any size.
 
 | Suite | Count | Network |
 | --- | --- | --- |
-| Unit (`pytest`) | 378 | none — `responses` mocks every call |
+| Unit (`pytest`) | 632 | none — `responses` mocks every call |
 | Integration (`pytest -m integration`) | 15 | live EBI |
 
 Fixtures in `tests/fixtures/` are regenerated by `tests/fixtures/_generate.py`,
 kept in the repository so the bytes are reviewable. Each targets a specific v1
 failure mode: `#` preambles, `key=value` preambles, blank lines, 25-line
 metadata blocks, Latin-1, a UTF-8 BOM, four delimiters, a truncated gzip, a zip
-whose largest member is a PDF, and a headerless file.
+whose largest member is a PDF, and a headerless file. Later additions target
+failure modes found in the external run rather than in v1: an HTML landing
+page, an S3 XML error document, a tar whose data sits behind a directory entry
+and a README, a zip whose data sits behind a resource fork and a PDF, and plain
+text served under a `.gz` name.
+
+`tests/test_robustness.py` is organised by the diagnosis it pins rather than by
+module, so each test states which reported failure mode it rules out.
 
 Integration tests exist to detect upstream drift. They assert the *contract*
 GWASPoker depends on — that Range requests are honoured, that the sidecar

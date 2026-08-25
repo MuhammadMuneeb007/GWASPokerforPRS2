@@ -336,7 +336,12 @@ def _load_vocabulary(path: Path) -> tuple[dict[str, ColumnConcept], dict[str, st
     raw_heuristics = data.get("heuristics") or {}
     heuristics = _Heuristics(
         suffix=tuple(
-            (normalize_column_name(h["suffix"]), h["concept"], float(h.get("confidence", 0.6)))
+            (
+                ("_" if str(h["suffix"]).strip().startswith("_") else "")
+                + normalize_column_name(h["suffix"]),
+                h["concept"],
+                float(h.get("confidence", 0.6)),
+            )
             for h in raw_heuristics.get("suffix", [])
             if h.get("concept") in concepts
         ),

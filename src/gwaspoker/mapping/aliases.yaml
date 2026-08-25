@@ -425,6 +425,7 @@ concepts:
       - tandard_error
       - andard_error
       - dard_error
+      - se_2gc
       - all_inv_var_meta_sebeta
       - inv_var_meta_sebeta
 
@@ -446,6 +447,10 @@ concepts:
       - p_score
       - p_bolt_lmm
       - p_bolt_lmm_inf
+      # METAL writes P.2gc / SE.2gc for double genomic-control corrected
+      # statistics. Still a p-value on the probability scale.
+      - p_2gc
+      - gwas_p
       - p_linreg
       - p_bolt_lmm_linreg
       - p_value_association
@@ -550,6 +555,12 @@ concepts:
       - hm_effect_allele_frequency
       - all_meta_af
       - inv_var_meta_effect_allele_frequency
+      # 'Allele1' in METAL output is the effect allele, so a HapMap CEU
+      # frequency *of allele 1* is an effect-allele frequency.
+      - eaf_hapmapceu
+      - freqallele1hapmapceu
+      - allele1_freq_hapmapceu
+      - freq_allele1_hapmapceu
 
   minor_allele_frequency:
     description: >-
@@ -641,6 +652,8 @@ concepts:
       - n_effective_samples_variant_level
       - all_total
       - hm_n
+      # Sum of per-cohort N in meta-analysis output; a total sample size.
+      - n_total_sum
 
   cases:
     description: Number of cases contributing to the variant's test.
@@ -710,6 +723,8 @@ concepts:
       - all_info
       - oncoarray_imputation_r2
       - minimac_r2
+      - mach_r2
+      - mach_rsq
 
   direction:
     description: Per-cohort direction-of-effect string from a meta-analysis.

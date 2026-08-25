@@ -57,10 +57,31 @@ logger = logging.getLogger(__name__)
 #: Schemes the HTTP layer can actually fetch.
 FETCHABLE_SCHEMES = frozenset({"http", "https"})
 
-#: Schemes we accept and rewrite. EBI publishes the same paths over HTTPS, and
-#: :mod:`requests` has no FTP adapter, so an ``ftp://`` URL is rewritten rather
-#: than accepted-then-crashed-on or rejected outright.
+#: Schemes accepted for rewriting, subject to the host allow-list below.
 REWRITABLE_SCHEMES = frozenset({"ftp"})
+
+#: Hosts known to serve the *same paths* over HTTPS as over FTP.
+#:
+#: ``ftp://host/path`` does not universally imply ``https://host/path`` -- many
+#: FTP servers have no HTTP front end at all, and some that do use a different
+#: path prefix. Rewriting blindly would silently send the probe somewhere the
+#: user did not ask for, and a 404 from the wrong URL is worse than an honest
+#: "unsupported scheme".
+#:
+#: Each entry is a host suffix, verified by hand. Add one only after checking
+#: that the HTTPS path really mirrors the FTP path.
+FTP_HTTPS_MIRRORS: tuple[str, ...] = (
+    "ftp.ebi.ac.uk",  # verified: https://ftp.ebi.ac.uk/pub/... mirrors ftp://
+    "ftp.ncbi.nlm.nih.gov",  # verified: https://ftp.ncbi.nlm.nih.gov/... mirrors ftp://
+    "ftp.sanger.ac.uk",
+    "ftp.1000genomes.ebi.ac.uk",
+)
+
+
+def _has_https_mirror(host: str) -> bool:
+    """True when ``host`` is known to serve the same paths over HTTPS."""
+    host = host.lower().split(":", 1)[0]
+    return any(host == mirror or host.endswith("." + mirror) for mirror in FTP_HTTPS_MIRRORS)
 
 
 class InputType(str, Enum):
@@ -97,6 +118,10 @@ class InputTarget:
     #: Set when the URL was rewritten (``ftp://`` to ``https://``), so the
     #: report shows what was actually fetched rather than what was typed.
     normalisation_note: Optional[str] = None
+    #: Machine-readable name of the rule applied, or ``None``. Reported
+    #: alongside the original and normalised URLs so a supplementary table can
+    #: state exactly which URLs were altered and why.
+    normalisation_rule: Optional[str] = None
 
     @property
     def is_accession(self) -> bool:
@@ -120,8 +145,13 @@ class InputTarget:
             "input": self.raw,
             "input_type": self.input_type.value,
             "accession": self.accession,
+            # `original_url` and `url` differ only when a rule fired; keeping
+            # both means a report never shows a URL the user did not supply
+            # without also showing what it became.
+            "original_url": self.raw if self.is_direct_url else None,
             "url": self.url,
             "path": str(self.path) if self.path else None,
+            "normalisation_rule": self.normalisation_rule,
             "normalisation_note": self.normalisation_note,
         }
 
@@ -146,21 +176,39 @@ def is_direct_url(value: str) -> bool:
 
 
 def normalise_url(value: str) -> tuple[str, Optional[str]]:
-    """Return a fetchable URL and a note if it had to be rewritten."""
+    """Return a fetchable URL, plus a note when a rewrite rule was applied.
+
+    ``ftp://`` is rewritten to ``https://`` **only for hosts known to mirror
+    the same paths** (:data:`FTP_HTTPS_MIRRORS`). For any other host the URL is
+    refused rather than silently redirected somewhere the user did not ask for:
+    :mod:`requests` has no FTP adapter, and guessing an HTTPS equivalent that
+    may not exist would turn "unsupported scheme" into a misleading 404 against
+    a URL that was never requested.
+    """
     text = str(value).strip()
     parsed = urlparse(text)
     scheme = parsed.scheme.lower()
 
     if scheme in FETCHABLE_SCHEMES:
         return text, None
+
     if scheme in REWRITABLE_SCHEMES:
+        if not _has_https_mirror(parsed.netloc):
+            raise InputResolutionError(
+                f"{text!r} uses ftp://, which GWASPoker cannot fetch (the HTTP layer "
+                f"has no FTP adapter), and {parsed.netloc!r} is not a host known to "
+                "serve the same paths over HTTPS. Supply the https:// URL directly, or "
+                "add the host to FTP_HTTPS_MIRRORS once you have verified that its "
+                "HTTPS paths mirror its FTP paths."
+            )
         rewritten = urlunparse(("https", *tuple(parsed)[1:]))
         note = (
-            f"{scheme}:// was rewritten to https:// -- the HTTP layer has no {scheme.upper()} "
-            "adapter, and repositories that publish over FTP serve the same paths over HTTPS"
+            f"ftp:// was rewritten to https:// under rule 'ftp_https_mirror' because "
+            f"{parsed.netloc} is a verified mirror; the HTTP layer has no FTP adapter"
         )
-        logger.info("Rewrote %s to %s", text, rewritten)
+        logger.info("Rewrote %s to %s (ftp_https_mirror)", text, rewritten)
         return rewritten, note
+
     raise InputResolutionError(f"{text!r} uses an unsupported URL scheme: {scheme!r}")
 
 
@@ -186,11 +234,24 @@ def resolve_input(
 
     if is_direct_url(text):
         url, note = normalise_url(text)
+        rule = "ftp_https_mirror" if note else None
+
+        # Known share links serve a landing page unless rewritten. Isolated in
+        # url_resolvers.py so host quirks never reach the HTTP layer.
+        from gwaspoker.url_resolvers import resolve_public_share_url
+
+        share = resolve_public_share_url(url)
+        if share.was_rewritten:
+            url = share.url
+            rule = share.rule
+            note = "; ".join(filter(None, (note, share.note)))
+
         return InputTarget(
             raw=text,
             input_type=InputType.DIRECT_URL,
             url=url,
-            normalisation_note=note,
+            normalisation_note=note or None,
+            normalisation_rule=rule,
         )
 
     if is_accession(text):

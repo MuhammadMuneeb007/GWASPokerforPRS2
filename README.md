@@ -173,10 +173,33 @@ A direct URL is still **bounded**: it never triggers a full download.
 gwaspoker assess https://example.org/huge.gz --probe-bytes 262144
 ```
 
-`ftp://` URLs are accepted and rewritten to `https://` — the HTTP layer has no
-FTP adapter, and repositories that publish over FTP serve the same paths over
-HTTPS. The rewrite is reported, and the URL you typed is preserved in the
-output.
+### URL rewrites are explicit, and never guesses
+
+`requests` has no FTP adapter, so `ftp://` has to become `https://` to be
+fetchable. GWASPoker does that **only for hosts verified to serve the same
+paths over both** — `ftp.ebi.ac.uk`, `ftp.ncbi.nlm.nih.gov`, `ftp.sanger.ac.uk`
+and `ftp.1000genomes.ebi.ac.uk`. For any other host the URL is refused with an
+explanation, because `ftp://host/path` does not imply that `https://host/path`
+exists: guessing turns "unsupported scheme" into a misleading 404 against a URL
+you never asked for.
+
+Known share links are rewritten too. A Dropbox URL ending `.zip` returns an
+HTML preview page, not the file, unless `dl=1` is set — which GWASPoker used to
+report as a ZIP decompression error. Only Dropbox is implemented, because it is
+the only provider there is evidence for; rewrite rules for hosts with no
+failing examples would be speculative and untestable.
+
+Every rewrite is reported. `normalisation_rule` names the rule that fired and
+`original_url` preserves what you typed, so a supplementary table can state
+exactly which URLs were altered and why.
+
+### When the server returns a page instead of a file
+
+A URL ending `.gz` that responds with HTML is not a corrupt archive. GWASPoker
+classifies the payload before trying to decode it and reports
+`non_data_response` — with the final URL after redirects and the content-type —
+rather than `decompression_error`. A `.gz` that turns out to be plain text is
+`content_mismatch`, and is read as the plain text it is.
 
 ### The source type is recorded
 
@@ -186,8 +209,10 @@ the target string:
 
 ```json
 { "input_type": "direct_url",
-  "input": { "input": "https://example.org/gwas.txt.gz",
-             "url": "https://example.org/gwas.txt.gz",
+  "input": { "input": "https://www.dropbox.com/s/abc/gwas.txt.gz?dl=0",
+             "original_url": "https://www.dropbox.com/s/abc/gwas.txt.gz?dl=0",
+             "url": "https://www.dropbox.com/s/abc/gwas.txt.gz?dl=1",
+             "normalisation_rule": "dropbox_direct_download",
              "accession": null } }
 ```
 

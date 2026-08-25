@@ -208,6 +208,83 @@ def main() -> None:
     (HERE / "ftp_index.html").write_text(_TOP_LEVEL_INDEX, encoding="utf-8")
     (HERE / "ftp_index_harmonised.html").write_text(_HARMONISED_INDEX, encoding="utf-8")
 
+    # 16. A share/landing page returned with HTTP 200 for a .gz URL. This is
+    #     what an external run over 768 heterogeneous URLs actually received
+    #     from moved files and share links -- not a corrupt archive.
+    (HERE / "landing_page.html").write_text(
+        "<!DOCTYPE html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta name="MobileOptimized" content="width" />\n'
+        "<title>File not available</title>\n"
+        "</head>\n"
+        "<body>\n"
+        '<div class="container"><p>This file has moved.</p></div>\n'
+        "</body>\n"
+        "</html>\n",
+        encoding="utf-8",
+    )
+
+    # 17. An XML error document, as S3/GCS return for a missing key.
+    (HERE / "error_document.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Error><Code>NoSuchKey</Code>"
+        "<Message>The specified key does not exist.</Message></Error>\n",
+        encoding="utf-8",
+    )
+
+    # 18. A tar whose first members are metadata: a directory entry and a README
+    #     precede the data file. The old prefix parser skipped exactly one
+    #     512-byte header and returned whatever followed, which is why valid
+    #     ustar archives yielded no header even though the bytes were present.
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        directory = tarfile.TarInfo("study/")
+        directory.type = tarfile.DIRTYPE
+        directory.size = 0
+        archive.addfile(directory)
+
+        noise = b"Supplementary information for Example et al."
+        readme = tarfile.TarInfo("study/README.txt")
+        readme.size = len(noise)
+        archive.addfile(readme, io.BytesIO(noise))
+
+        payload = (
+            b"MarkerName\tAllele1\tAllele2\tFreqAllele1HapMapCEU\tb\tse\tp\tN\n"
+            b"rs1\ta\tg\t0.31\t0.021\t0.004\t1.2e-07\t150000\n"
+            b"rs2\tc\tt\t0.08\t-0.013\t0.006\t3.0e-02\t149800\n"
+        ) * 40
+        data = tarfile.TarInfo("study/metaanalysis.tbl")
+        data.size = len(payload)
+        archive.addfile(data, io.BytesIO(payload))
+    (HERE / "tar_with_metadata_first.tar").write_bytes(buffer.getvalue())
+
+    # 19. Plain-text GWAS served under a .gz filename: the extension lies, but
+    #     the bytes are perfectly readable.
+    (HERE / "plaintext_named_gz.tsv.gz").write_bytes(
+        b"CHR\tBP\tSNP\tA1\tA2\tBETA\tSE\tP\n"
+        b"1\t12345\trs1\tA\tG\t0.12\t0.03\t1e-6\n"
+        b"2\t99821\trs2\tC\tT\t-0.05\t0.02\t3.4e-4\n"
+    )
+
+    # 20. A zip laid out the way archives from supplementary material usually
+    #     are: a macOS resource fork, a directory record and a PDF precede the
+    #     data. Reading "the first local file header" -- the only thing possible
+    #     without the central directory, which sits past the probe boundary --
+    #     used to return the PDF.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("__MACOSX/._study", b"\x00\x05\x16\x07resource fork")
+        archive.writestr("study/", b"")
+        archive.writestr("study/manuscript.pdf", b"%PDF-1.4\n" + b"binary padding " * 200)
+        archive.writestr("study/README.txt", b"Supplementary information.\n" * 20)
+        archive.writestr(
+            "study/sumstats.tsv",
+            b"CHR\tBP\tSNP\tA1\tA2\tBETA\tSE\tP\tN\n"
+            + b"1\t12345\trs1\tA\tG\t0.12\t0.03\t1e-6\t100000\n" * 300,
+        )
+    (HERE / "zip_with_metadata_first.zip").write_bytes(buffer.getvalue())
+
     for path in sorted(HERE.glob("*")):
         if path.is_file() and path.name != "_generate.py":
             print(f"{path.name:34s} {path.stat().st_size:>9,} bytes")

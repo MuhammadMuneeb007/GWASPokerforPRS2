@@ -44,6 +44,7 @@ from gwaspoker.probe.compression import (
 )
 from gwaspoker.probe.encoding import detect_encoding, split_complete_lines
 from gwaspoker.probe.header import HeaderDetectionResult, detect_header
+from gwaspoker.probe.payload import PayloadClassification, PayloadKind, classify_payload_prefix
 from gwaspoker.validation.values import ValueStatus, ValueValidationResult, validate_values
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,47 @@ class TransferStats:
     transfer_time_seconds: float = 0.0
     http_status: Optional[int] = None
     request_count: int = 0
+    #: Where the bytes actually came from, after redirects. A share link that
+    #: 302s to a landing page is the commonest cause of a bogus "decompression
+    #: error" on a .gz URL, and without this the report cannot show it.
+    final_url: Optional[str] = None
+    content_type: Optional[str] = None
+    content_disposition: Optional[str] = None
+    redirect_count: int = 0
+    #: One entry per HTTP attempt, including the ones that failed. Makes every
+    #: outcome auditable in supplementary data rather than just countable.
+    attempts: tuple[dict[str, Any], ...] = ()
+
+    def record_attempt(
+        self,
+        method: str,
+        *,
+        status: Optional[int] = None,
+        bytes_received: int = 0,
+        seconds: float = 0.0,
+        error: Optional[str] = None,
+    ) -> None:
+        """Log one HTTP attempt and fold its cost into the totals.
+
+        Byte accounting counts **every** payload byte that crossed the network,
+        including bytes from an attempt that later timed out. TransferStats
+        claims to be "exactly what moved over the network", and the manuscript's
+        headline claim is transfer volume, so an abandoned partial read must not
+        vanish from the total.
+        """
+        self.attempts = (
+            *self.attempts,
+            {
+                "method": method,
+                "status": status,
+                "bytes": bytes_received,
+                "seconds": round(seconds, 4),
+                "error": error,
+            },
+        )
+        self.request_count += 1
+        self.received_bytes += bytes_received
+        self.transfer_time_seconds += seconds
 
     @property
     def transfer_reduction(self) -> Optional[float]:
@@ -79,6 +121,11 @@ class TransferStats:
             "transfer_time_seconds": round(self.transfer_time_seconds, 4),
             "http_status": self.http_status,
             "request_count": self.request_count,
+            "final_url": self.final_url,
+            "content_type": self.content_type,
+            "content_disposition": self.content_disposition,
+            "redirect_count": self.redirect_count,
+            "attempts": list(self.attempts),
             "transfer_reduction": (
                 round(self.transfer_reduction, 6) if self.transfer_reduction is not None else None
             ),
@@ -97,6 +144,9 @@ class ProbeResult:
     decompression: Optional[DecompressionResult] = None
     encoding: Optional[str] = None
     encoding_confidence: Optional[float] = None
+    #: Whether the bytes were plausibly a data file at all, decided before any
+    #: decoding was attempted.
+    payload: Optional[PayloadClassification] = None
     header: Optional[HeaderDetectionResult] = None
     mapping: Optional[MappingResult] = None
     #: Whether the sampled values support the concepts the header claimed.
@@ -153,6 +203,7 @@ class ProbeResult:
                 round(self.encoding_confidence, 3) if self.encoding_confidence else None
             ),
             "transfer": self.transfer.to_dict(),
+            "payload": self.payload.to_dict() if self.payload else None,
             "decompression": self.decompression.to_dict() if self.decompression else None,
             "header": self.header.to_dict() if self.header else None,
             "mapping": self.mapping.to_dict() if self.mapping else None,
@@ -257,67 +308,133 @@ class RemoteProber:
 
     # ------------------------------------------------------------------
 
+    #: Statuses that are a definite answer, not a transient fault. Retrying or
+    #: falling back on these would waste a request and misreport the outcome.
+    _TERMINAL_STATUSES = (403, 404, 410)
+
+    def _absorb(self, stats: TransferStats, result, method: str) -> None:
+        """Fold one successful response's metadata into the transfer stats."""
+        stats.record_attempt(
+            method,
+            status=result.status_code,
+            bytes_received=result.byte_count,
+            seconds=result.elapsed_seconds,
+        )
+        stats.http_status = result.status_code
+        stats.final_url = result.url
+        stats.redirect_count = result.redirect_count
+        # The response that delivered the bytes is the authority on their type,
+        # but a GET that omits the header must not erase what HEAD told us.
+        if result.content_type:
+            stats.content_type = result.content_type
+        if result.content_disposition:
+            stats.content_disposition = result.content_disposition
+        if stats.remote_file_size is None:
+            stats.remote_file_size = parse_content_length(result.headers)
+
     def _fetch_prefix(self, url: str, limit: int, stats: TransferStats) -> bytes:
-        """Retrieve at most ``limit`` bytes, preferring an HTTP Range request."""
+        """Retrieve at most ``limit`` bytes, preferring an HTTP Range request.
+
+        Three attempts at most, and every one is recorded:
+
+        1. ``HEAD`` for the size and range support. **Advisory only** -- a
+           timeout here used to abort the whole probe, even though the metadata
+           it provides is a convenience. Old consortium servers frequently
+           reject or hang on HEAD while serving GET perfectly well.
+        2. ``GET`` with a ``Range`` header.
+        3. A plain bounded ``GET``, reached when the range attempt failed *or*
+           errored. The range attempt previously had no fallback, so one
+           transient failure ended the probe.
+
+        A terminal status (403/404/410) stops immediately with a structured
+        failure -- those are answers, not faults. The byte ceiling is unchanged
+        throughout.
+        """
         range_supported: Optional[bool] = None
+
+        # --- 1. HEAD, advisory ------------------------------------------
         try:
             head = self.http.head(url)
-            stats.request_count += 1
+            stats.record_attempt("HEAD", status=head.status_code, seconds=head.elapsed_seconds)
+
+            # Capture response metadata whatever the status. A 404 reached
+            # after two redirects is explained by the redirects, so discarding
+            # them on the failure path throws away the useful half of the
+            # answer.
+            stats.http_status = head.status_code
+            stats.final_url = head.url
+            stats.redirect_count = head.redirect_count
+            if head.content_type:
+                stats.content_type = head.content_type
+            if head.content_disposition:
+                stats.content_disposition = head.content_disposition
+
             if head.ok:
                 stats.remote_file_size = parse_content_length(head.headers)
                 range_supported = supports_ranges(head.headers)
-            elif head.status_code in (403, 404, 410):
+            elif head.status_code in self._TERMINAL_STATUSES:
                 raise RemoteAccessError(
                     f"HTTP {head.status_code} for {url}",
                     category=http_status_category(head.status_code),
                 )
-        except RemoteAccessError:
-            raise
+        except RemoteAccessError as exc:
+            if exc.category in (
+                FailureCategory.HTTP_403,
+                FailureCategory.HTTP_404,
+                FailureCategory.API_DEPRECATED,
+            ):
+                raise
+            # HEAD is a convenience, not a requirement: carry on without it.
+            stats.record_attempt("HEAD", error=str(exc))
+            logger.debug("HEAD failed for %s (%s); continuing with GET", url, exc)
+
         stats.range_supported = range_supported
 
+        # --- 2. Range GET -------------------------------------------------
         if range_supported is not False:
-            result = self.http.get_range(url, start=0, length=limit)
-            stats.request_count += 1
-            stats.http_status = result.status_code
-            stats.transfer_time_seconds += result.elapsed_seconds
+            try:
+                result = self.http.get_range(url, start=0, length=limit)
+            except RemoteAccessError as exc:
+                stats.record_attempt("GET_RANGE", error=str(exc))
+                logger.debug("Range GET failed for %s (%s); trying a bounded GET", url, exc)
+            else:
+                if result.status_code in self._TERMINAL_STATUSES:
+                    self._absorb(stats, result, "GET_RANGE")
+                    raise RemoteAccessError(
+                        f"HTTP {result.status_code} for {url}",
+                        category=http_status_category(result.status_code),
+                    )
+                if result.from_range:
+                    self._absorb(stats, result, "GET_RANGE")
+                    stats.range_used = True
+                    stats.range_supported = True
+                    return result.content
+                if result.ok:
+                    # Range ignored; we still stopped at the limit ourselves.
+                    self._absorb(stats, result, "GET_RANGE")
+                    stats.range_supported = False
+                    logger.debug("%s ignored the Range header; bounded the read locally", url)
+                    return result.content
+                self._absorb(stats, result, "GET_RANGE")
+                if result.status_code != 416:
+                    raise RemoteAccessError(
+                        f"HTTP {result.status_code} for {url}",
+                        category=http_status_category(result.status_code),
+                    )
 
-            if result.status_code in (403, 404, 410):
-                raise RemoteAccessError(
-                    f"HTTP {result.status_code} for {url}",
-                    category=http_status_category(result.status_code),
-                )
-            if result.from_range:
-                stats.range_used = True
-                stats.range_supported = True
-                stats.received_bytes = result.byte_count
-                if stats.remote_file_size is None:
-                    stats.remote_file_size = parse_content_length(result.headers)
-                return result.content
-            if result.ok:
-                # Range ignored; we still stopped at the limit ourselves.
-                stats.range_supported = False
-                stats.received_bytes = result.byte_count
-                logger.debug("%s ignored the Range header; bounded the read locally", url)
-                return result.content
-            if result.status_code != 416:
-                raise RemoteAccessError(
-                    f"HTTP {result.status_code} for {url}",
-                    category=http_status_category(result.status_code),
-                )
-
-        result = self.http.stream_bounded(url, limit=limit)
-        stats.request_count += 1
-        stats.http_status = result.status_code
-        stats.transfer_time_seconds += result.elapsed_seconds
+        # --- 3. Bounded GET ------------------------------------------------
+        try:
+            result = self.http.stream_bounded(url, limit=limit)
+        except RemoteAccessError as exc:
+            stats.record_attempt("GET_BOUNDED", error=str(exc))
+            raise
+        self._absorb(stats, result, "GET_BOUNDED")
         stats.range_supported = False
         if not result.ok:
             raise RemoteAccessError(
                 f"HTTP {result.status_code} for {url}",
                 category=http_status_category(result.status_code),
             )
-        stats.received_bytes = result.byte_count
-        if stats.remote_file_size is None:
-            stats.remote_file_size = parse_content_length(result.headers)
         return result.content
 
     def _interpret(self, data: bytes, result: ProbeResult) -> None:
@@ -325,6 +442,25 @@ class RemoteProber:
         if not data:
             result.error = "The server returned an empty response body"
             result.failure_category = FailureCategory.TRUNCATED_PROBE
+            return
+
+        # Before any decoding: are these bytes plausibly a data file at all?
+        # An HTTP 200 web page used to reach the header scorer and be reported
+        # as a successfully detected header, or to surface as a
+        # "decompression_error" that blamed the file rather than the URL.
+        headers = {}
+        if result.transfer.content_type:
+            headers["Content-Type"] = result.transfer.content_type
+        result.payload = classify_payload_prefix(data, filename=result.filename, headers=headers)
+
+        if result.payload.kind is PayloadKind.NON_DATA:
+            result.error = _non_data_message(result)
+            result.failure_category = FailureCategory.NON_DATA_RESPONSE
+            return
+
+        if result.payload.kind is PayloadKind.CONTENT_MISMATCH:
+            result.error = _non_data_message(result)
+            result.failure_category = FailureCategory.CONTENT_MISMATCH
             return
 
         result.compression = detect_compression(data, result.filename)
@@ -373,8 +509,23 @@ class RemoteProber:
             result.failure_category = exc.category
             return
 
+        # A header candidate scoring above zero is not on its own proof that
+        # this is tabular genomic data. Require corroboration from either the
+        # mapping or the sampled rows -- but not both, so a genuinely novel
+        # schema stays inspectable.
+        mapped = get_mapper().map_header(header.raw_header)
+        if not _looks_like_a_data_table(header, mapped):
+            result.error = (
+                f"a header row was found ({', '.join(header.raw_header[:6])}...) but no "
+                "column mapped to a known concept and the following rows do not look "
+                "like tabular genomic data; this payload is probably not summary "
+                "statistics"
+            )
+            result.failure_category = FailureCategory.UNSUPPORTED_FORMAT
+            return
+
         result.header = header
-        result.mapping = get_mapper().map_header(header.raw_header)
+        result.mapping = mapped
 
         # Second, independent line of evidence: do the sampled values support
         # the concepts the header names claimed? These rows are already in
@@ -384,6 +535,39 @@ class RemoteProber:
             header.sample_rows,
             max_rows=self.config.validation_rows,
         )
+
+
+def _non_data_message(result: ProbeResult) -> str:
+    """Explain a non-data response in terms the user can act on."""
+    parts = [result.payload.reason]
+    transfer = result.transfer
+    if transfer.final_url and transfer.final_url != result.source:
+        parts.append(f"the request was redirected to {transfer.final_url}")
+    if transfer.content_type:
+        parts.append(f"Content-Type was {transfer.content_type}")
+    parts.append(
+        "the transfer itself succeeded, so this is a URL problem rather than a " "corrupt file"
+    )
+    return "; ".join(parts)
+
+
+def _looks_like_a_data_table(header: HeaderDetectionResult, mapping: MappingResult) -> bool:
+    """Corroborate a detected header with independent evidence.
+
+    Either a recognised column concept, or sampled rows that behave like a
+    table, is enough. Requiring a mapping hit unconditionally would reject
+    genuinely novel schemas, which are exactly the files worth inspecting.
+    """
+    from gwaspoker.mapping.normalize import is_probably_data_row
+
+    if mapping.resolved:
+        return True
+    rows = header.sample_rows
+    if not rows:
+        return False
+    consistent = sum(1 for row in rows if len(row) == len(header.raw_header))
+    data_like = sum(1 for row in rows if is_probably_data_row(row))
+    return consistent / len(rows) >= 0.8 and data_like / len(rows) >= 0.5
 
 
 def _filename_from_url(url: str) -> str:

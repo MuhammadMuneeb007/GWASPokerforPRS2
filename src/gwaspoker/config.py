@@ -17,7 +17,13 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Optional
 
+from gwaspoker import __version__
+
 logger = logging.getLogger(__name__)
+
+#: Read from the package rather than repeated as a literal: a stale version in
+#: the User-Agent misattributes every request in a benchmark run.
+_USER_AGENT = f"gwaspoker/{__version__} (+https://github.com/muneebsiddique/gwaspoker)"
 
 #: Probe sizes offered by the CLI and by the benchmark's probe-size experiment.
 PROBE_SIZE_LADDER: tuple[int, ...] = (65_536, 131_072, 262_144, 524_288, 1_048_576)
@@ -39,7 +45,7 @@ class GWASPokerConfig:
     connect_timeout: float = 15.0
     max_retries: int = 3
     retry_backoff: float = 0.5
-    user_agent: str = "gwaspoker/2.0.0 (+https://github.com/muneebsiddique/gwaspoker)"
+    user_agent: str = _USER_AGENT
     #: Requests started per second, across the whole process.
     #:
     #: The GWAS Catalog documents 15 queries/second for REST API v2. That figure
