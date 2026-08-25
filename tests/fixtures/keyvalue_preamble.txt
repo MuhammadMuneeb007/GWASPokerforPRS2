@@ -1,0 +1,8 @@
+study=ABC
+author=XYZ
+build=GRCh37
+
+MarkerName Allele1 Allele2 Effect StdErr P-value N
+rs1 a g 0.1 0.02 1e-5 10000
+rs2 c t -0.3 0.05 2e-9 10000
+rs3 t a 0.05 0.03 0.09 9800

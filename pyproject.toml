@@ -1,0 +1,105 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gwaspoker"
+version = "2.0.0"
+description = "API-aware pre-download triage of GWAS summary statistics for PRS workflows"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "Muneeb Siddique" }]
+keywords = [
+    "GWAS",
+    "summary statistics",
+    "polygenic risk score",
+    "PRS",
+    "GWAS Catalog",
+    "bioinformatics",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "requests>=2.28",
+    "pandas>=1.5",
+    "pyyaml>=6.0",
+    "charset-normalizer>=3.0",
+    "typer>=0.9",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+llm = ["transformers>=4.30", "torch>=2.0"]
+gwaslab = ["gwaslab>=3.4"]
+excel = ["openpyxl>=3.1"]
+fuzzy = ["rapidfuzz>=3.0"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "responses>=0.24",
+    "ruff>=0.4",
+    "black>=24.1",
+]
+all = [
+    "gwaspoker[llm,gwaslab,excel,fuzzy]",
+]
+
+[project.urls]
+Homepage = "https://github.com/muneebsiddique/gwaspoker"
+Documentation = "https://github.com/muneebsiddique/gwaspoker/tree/main/docs"
+Issues = "https://github.com/muneebsiddique/gwaspoker/issues"
+
+[project.scripts]
+gwaspoker = "gwaspoker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gwaspoker = ["mapping/*.yaml", "reporting/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests that contact live EBI servers (deselect with '-m \"not integration\"')",
+]
+addopts = "-m 'not integration'"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RET", "ARG", "PTH"]
+ignore = [
+    "E501",   # line length is handled by black
+    "B008",   # Typer's Option()/Argument() defaults are the documented idiom
+    "SIM108", # an if/else is often clearer than a ternary here
+    # PEP 604 unions (X | None) cannot be used for Typer CLI parameters on
+    # Python 3.9: `from __future__ import annotations` makes them strings, and
+    # Typer resolves them at runtime with get_type_hints(), which evaluates
+    # `Path | None` and raises TypeError on 3.9. typing.Optional stays until
+    # the minimum supported version is 3.10.
+    "UP045",  # non-pep604-annotation-optional
+    "UP007",  # non-pep604-annotation-union
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]

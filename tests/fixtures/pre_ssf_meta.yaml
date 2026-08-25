@@ -1,0 +1,15 @@
+# Study meta-data
+gwas_id: GCST90038646
+date_metadata_last_modified: 2025-01-14
+trait_description:
+  - Migraine
+genome_assembly: GRCh37
+samples:
+  - sample_ancestry_category:
+      - NR
+    sample_size: 484598
+data_file_name: GCST90038646_buildGRCh37.tsv
+file_type: pre-GWAS-SSF
+data_file_md5sum: 66b4c5f7091208cd518dd6ca2399c561
+is_harmonised: false
+is_sorted: false

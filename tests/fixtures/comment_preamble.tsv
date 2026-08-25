@@ -1,0 +1,6 @@
+# GWAS summary statistics for migraine
+# Generated 2024-01-01 by ExampleTool v1.2
+CHR	POS	SNP	A1	A2	BETA	SE	P
+1	12345	rs1	A	G	0.12	0.03	1e-6
+1	22222	rs2	C	T	-0.05	0.02	3.4e-4
+2	99887	rs3	G	A	0.01	0.01	0.42

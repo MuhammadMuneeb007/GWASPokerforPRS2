@@ -1,0 +1,5 @@
+# Contributed by Björn Müller-Schäfer
+# Institut für Humangenetik
+CHR	BP	SNP	EA	NEA	OR	SE	PVAL
+1	12345	rs1	A	G	1.05	0.03	1e-6
+2	54321	rs2	T	C	0.94	0.04	2e-5

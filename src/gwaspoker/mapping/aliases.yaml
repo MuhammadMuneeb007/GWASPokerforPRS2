@@ -1,0 +1,788 @@
+# Canonical GWAS column vocabulary for GWASPoker.
+#
+# THIS IS THE ONLY ALIAS RESOURCE IN THE PACKAGE. The original implementation
+# maintained fourteen Python lists, duplicated verbatim across Module 2,
+# Module 4 and Module 5, in which five aliases had been silently corrupted by
+# missing commas between adjacent string literals. See docs/MIGRATION_NOTES.md
+# section 4 for the full defect list and docs/MAPPING_SCHEMA.md for the schema.
+#
+# Structure
+# ---------
+#   version           schema version of this file
+#   concepts:
+#     <canonical_name>:
+#       description     what the column means, scientifically
+#       prs_tool_symbol short symbol used by PLINK/PRSice-style tools
+#       category        identification | allele | effect | significance |
+#                       frequency | sample | quality | meta
+#       aliases         curated exact aliases (compared after normalization)
+#
+# Aliases are matched after normalization (lower-cased, punctuation folded to
+# underscores, runs collapsed, edges trimmed) -- see mapping/normalize.py. So
+# "P-Value", "p.value" and "P_VALUE" all reach the same entry, and only one form
+# needs listing here.
+#
+# Rules for editing:
+#   * an alias belongs to exactly one concept (enforced by tests);
+#   * no alias may be a fragment that would match unrelated columns
+#     ("e", "b", "base", "pair", "standard", "odds", "_value" were all removed);
+#   * an alias that means something different from its concept does not belong
+#     here, however common it is (p_bolt_lmm_inf is a p-value, not a beta).
+
+version: 2
+
+concepts:
+
+  # ------------------------------------------------------------------
+  # Variant identification
+  # ------------------------------------------------------------------
+
+  chromosome:
+    description: Chromosome on which the variant lies.
+    prs_tool_symbol: CHR
+    category: identification
+    aliases:
+      - chromosome
+      - chr
+      - chrom
+      - chro
+      - chromo
+      - ch
+      - chr_name
+      - chr_build36
+      - chr_build37
+      - chr_build38
+      - chromosome_build36
+      - chromosome_build37
+      - hm_chrom
+      - chr_id
+      - chrid
+      - chr_no
+      - chrnum
+      - chr_number
+      - scaffold
+      - contig
+
+  position:
+    description: Base-pair coordinate of the variant on its chromosome.
+    prs_tool_symbol: BP
+    category: identification
+    aliases:
+      - base_pair_location
+      - position
+      - pos
+      - bp
+      - bpos
+      - basepair
+      - base_pair
+      - base_pair_position
+      - base_pair_location_grch37
+      - base_pair_location_grch38
+      - genpos
+      - phys_pos
+      - physical_position
+      - snp_pos
+      - pos_b36
+      - pos_b37
+      - pos_b38
+      - posb37
+      - posb38
+      - position_b36
+      - position_b37
+      - position_b38
+      - position_build36
+      - position_build37
+      - position_grch37
+      - position_grch38
+      - position_hg18
+      - position_hg19
+      - position_hg38
+      - positionhg19
+      - pos_build36
+      - pos_build37
+      - hm_pos
+      - start
+      - coordinate
+
+  chromosome_position:
+    description: >-
+      Combined chromosome and position in a single field (for example
+      "chr:pos"). Satisfies the locus requirement on its own, but must be split
+      before most PRS tools can use it.
+    prs_tool_symbol: CHRPOS
+    category: identification
+    aliases:
+      - chr_pos
+      - chrpos
+      - chr_position
+      - chrom_pos
+      - chr_pos_b36
+      - chr_pos_b37
+      - chr_pos_b38
+      - chr_bp
+      - chrbp
+      - position_chr
+      - snp_chrpos
+
+  variant_id:
+    description: >-
+      Variant identifier: an rsID, or a structured identifier such as
+      "1_12345_A_G". Used to align variants against an LD reference panel.
+    prs_tool_symbol: SNP
+    category: identification
+    aliases:
+      - variant_id
+      - snp
+      - snpid
+      - snp_id
+      - snp_ids
+      - snpname
+      - snp_name
+      - rsid
+      - rs_id
+      - rs_ids
+      - rs_number
+      - rs_numbers
+      - rsnumber
+      - rs_id_all
+      - rs_marker_id
+      - snprsid
+      - dbsnprsid
+      - markername
+      - marker_name
+      - markerid
+      - marker_id
+      - marker
+      - variantid
+      - var_id
+      - varid
+      - var_name
+      - uniqid
+      - locus_id
+      - illuminasnp
+      - vcf_ids
+      - hm_variant_id
+      - hm_rsid
+      - id
+      - name
+      - chromosome_position_reference_allele_other_allele_b37
+      - chromosome_position_reference_allele_other_allele_b38
+
+  # ------------------------------------------------------------------
+  # Alleles
+  #
+  # v1 listed a1/allele1/allele_1 in BOTH the effect and the alternative allele
+  # lists, so is_string_in_list() reported the same column as both. Resolved
+  # here in favour of the dominant PLINK/METAL convention: A1 is the effect
+  # allele, A2/A0 the other allele.
+  # ------------------------------------------------------------------
+
+  effect_allele:
+    description: >-
+      Allele to which the reported effect size applies. Getting this wrong flips
+      the sign of every weight in a polygenic score.
+    prs_tool_symbol: A1
+    category: allele
+    aliases:
+      - effect_allele
+      - effect_allel
+      - eff_allele
+      - effectallele
+      - effect_allele_all
+      - effect_allele_plink
+      - effect_allele_saige
+      - a1
+      - a_1
+      - allele1
+      - allele_1
+      - allelea
+      - a1_allele
+      - ea
+      - coded_allele
+      - coded_all
+      - inc_allele
+      - increaser_allele
+      - risk_allele
+      - tested_allele
+      - test_allele
+      - t_allele
+      - alt
+      - alt_allele
+      - alternate_allele
+      - alternative_allele
+      - hm_effect_allele
+      - allele_effect
+
+  other_allele:
+    description: >-
+      Non-effect (reference) allele. Required to orient the effect allele
+      unambiguously against a reference panel.
+    prs_tool_symbol: A2
+    category: allele
+    aliases:
+      - other_allele
+      - other_all
+      - otherallele
+      - non_effect_allele
+      - noneffect_allele
+      - noneff_allele
+      - non_effect_allele_all
+      - noncoded_allele
+      - non_coded_allele
+      - noneffectallele
+      - a2
+      - a_2
+      - a0
+      - allele2
+      - allele_2
+      - allele0
+      - allele_0
+      - alleleb
+      - nea
+      - dec_allele
+      - decreaser_allele
+      - baseline_allele
+      - ref
+      - ref_allele
+      - reference_allele
+      - a2_other
+      - hm_other_allele
+      - major_allele
+      - majorallele
+
+  # ------------------------------------------------------------------
+  # Effect measures
+  #
+  # p_bolt_lmm_inf and p_bolt_lmm were listed under beta_list in v1. They are
+  # BOLT-LMM p-values. See docs/MIGRATION_NOTES.md section 4.5.
+  # ------------------------------------------------------------------
+
+  beta:
+    description: >-
+      Effect size on the linear (log-odds for binary traits) scale. Directly
+      usable as a PRS weight.
+    prs_tool_symbol: BETA
+    category: effect
+    aliases:
+      - beta
+      - b
+      - effect
+      - effects
+      - effect_size
+      - effectsize
+      - effect_a1
+      - effect_a2
+      - effect_nw
+      - a1_effect
+      - maineffects
+      - main_effect
+      - beta_plink
+      - beta_snp_add
+      - beta_fixed
+      - beta_random
+      - log_odds
+      - log_or
+      - logor
+      - hm_beta
+      - estimate
+      - effect_1
+      - all_inv_var_meta_beta
+      - inv_var_meta_beta
+
+  odds_ratio:
+    description: >-
+      Odds ratio for a binary trait. Must be log-transformed before use as a PRS
+      weight; GWASPoker never performs that transformation silently.
+    prs_tool_symbol: OR
+    category: effect
+    aliases:
+      - odds_ratio
+      - oddsratio
+      - or
+      - or_fixed
+      - or_random
+      - odds_rat
+      - odds_ration
+      - oddsratiominorallele
+      - hm_odds_ratio
+      - heterozygous_or
+      - homozygous_or
+      - or_allele1
+      - exp_beta
+
+  hazard_ratio:
+    description: Hazard ratio from a survival analysis; log-transform before use.
+    prs_tool_symbol: HR
+    category: effect
+    aliases:
+      - hazard_ratio
+      - hazardratio
+      - hr
+
+  z_score:
+    description: >-
+      Z statistic. Usable as a PRS weight only alongside allele frequency and
+      sample size; the GWAS-SSF standard treats it as a last-resort effect
+      measure when beta, odds ratio and hazard ratio are all absent.
+    prs_tool_symbol: Z
+    category: effect
+    aliases:
+      - z_score
+      - zscore
+      - z
+      - z_value
+      - zval
+      - z_stat
+      - zstat
+      - z_statistic
+      - gc_zscore
+      - weighted_z
+      - zscore_metal
+      - z_weightedsumz
+      - z_meta
+      - mtag_z
+      - betazscale
+
+  standard_error:
+    description: Standard error of the effect estimate.
+    prs_tool_symbol: SE
+    category: effect
+    aliases:
+      - standard_error
+      - standarderror
+      - se
+      - stderr
+      - std_err
+      - stderror
+      - serror
+      - sebeta
+      - se_beta
+      - beta_se
+      - standard_error_of_beta
+      - se_of_beta
+      - se_plink
+      - se_saige
+      - se_lm
+      - se_gc
+      - se_error
+      - se_snp_add
+      - sebeta_snp_add
+      - log_or_se
+      - logor_se
+      - log_odds_se
+      - stderrlogor
+      - stderr_all
+      - stderr_nw
+      - odds_ratio_se
+      - or_se
+      - hm_standard_error
+      - tandard_error
+      - andard_error
+      - dard_error
+      - all_inv_var_meta_sebeta
+      - inv_var_meta_sebeta
+
+  # ------------------------------------------------------------------
+  # Statistical significance
+  # ------------------------------------------------------------------
+
+  p_value:
+    description: Association p-value on the probability scale (0, 1].
+    prs_tool_symbol: P
+    category: significance
+    aliases:
+      - p_value
+      - pvalue
+      - p
+      - pval
+      - p_val
+      - p_metal
+      - p_score
+      - p_bolt_lmm
+      - p_bolt_lmm_inf
+      - p_linreg
+      - p_bolt_lmm_linreg
+      - p_value_association
+      - p_value_gc
+      - gc_pvalue
+      - meta_pval
+      - meta_p
+      - pvalue_all
+      - pvalue_plink
+      - pval_fe
+      - pval_re
+      - pval_re2
+      - frequentist_add_pvalue
+      - frequentist_add_wald_pvalue_1
+      - score_pval
+      - robust_pval
+      - mtag_pval
+      - jass_pval
+      - wald_p
+      - p_lrt
+      - p_wald
+      - hm_p_value
+      - all_inv_var_meta_p
+      - inv_var_meta_p
+
+  neg_log10_p_value:
+    description: >-
+      Minus log base 10 of the p-value. NOT a p-value. v1 listed
+      neg_log_10_p_value as an alias of p_value, which silently inverts the
+      significance scale for any downstream tool. It satisfies the significance
+      requirement of PRS readiness but is reported as its own concept so that a
+      transformation is applied explicitly.
+    prs_tool_symbol: NEGLOG10P
+    category: significance
+    aliases:
+      - neg_log_10_p_value
+      - neg_log10_p_value
+      - neglog10_p
+      - neglog10p
+      - log10p
+      - log10_p
+      - minus_log10_p
+      - mlogp
+      - log10_pvalue
+      - _log10_p_value
+
+  heterogeneity_p_value:
+    description: >-
+      Cochran's Q heterogeneity p-value from a meta-analysis. Not the
+      association p-value; kept separate so it is never used as one.
+    prs_tool_symbol: HETP
+    category: significance
+    aliases:
+      - het_p_value
+      - het_pval
+      - het_pvalue
+      - hetpval
+      - heterogeneity_p_value
+      - pval_q
+      - q_pval
+      - p_het
+      - p_value_ancestry_het
+      - p_value_residual_het
+      - all_inv_var_het_p
+
+  # ------------------------------------------------------------------
+  # Frequency
+  # ------------------------------------------------------------------
+
+  effect_allele_frequency:
+    description: >-
+      Frequency of the effect allele. Preferred over minor allele frequency
+      because it is unambiguous with respect to strand and effect direction.
+    prs_tool_symbol: EAF
+    category: frequency
+    aliases:
+      - effect_allele_frequency
+      - effectallelefrequency
+      - effect_allele_freq
+      - effectallelefreq
+      - eff_allele_freq
+      - effect_allele_frequency_cases
+      - effect_allele_frequency_controls
+      - freq_effect_allele
+      - freq_effect_allele_all
+      - eaf
+      - eaf_a1
+      - eaf_ukb
+      - eaf_cases
+      - eaf_controls
+      - a1freq
+      - a1_freq
+      - freq_a1
+      - freqa1
+      - freq1
+      - frq1
+      - coded_allele_freq
+      - af_coded_all
+      - effect_af
+      - af1
+      - af_effect_allele
+      - hm_effect_allele_frequency
+      - minorallelefrequency
+      - all_meta_af
+      - inv_var_meta_effect_allele_frequency
+
+  minor_allele_frequency:
+    description: >-
+      Frequency of the minor allele. Which allele is minor is population
+      dependent, so this cannot substitute for the effect allele frequency
+      without additional information.
+    prs_tool_symbol: MAF
+    category: frequency
+    aliases:
+      - minor_allele_frequency
+      - maf
+      - minor_af
+      - maf_ukb
+      - maf_nw
+      - maf_co
+      - cases_maf
+      - controls_maf
+      - global_maf
+      - all_maf
+      - exac_amr_maf
+      - exac_sas_maf
+      - amr_maf
+      - sas_maf
+      - maf_hapmap_rel27
+      - expected_minor_allele_freq
+      - frq
+      - frq_u
+      - f_u
+
+  allele_frequency:
+    description: >-
+      Allele frequency where the reference allele is not stated. Reported but
+      never assumed to be the effect allele frequency.
+    prs_tool_symbol: AF
+    category: frequency
+    aliases:
+      - allele_frequency
+      - allelefreq
+      - allele_freq
+      - freq
+      - frequency
+      - af
+      - aaf
+      - eafreq
+      - avreaf
+      - allele_frequencies
+      - freq_hapmap
+      - 1000g_allele_freq
+
+  # ------------------------------------------------------------------
+  # Sample counts
+  #
+  # v1's N_list mixed total N, case counts and control counts into one list,
+  # so a PRS tool told n_cases was "N" would use the case count as the total.
+  # ------------------------------------------------------------------
+
+  sample_size:
+    description: Total number of individuals contributing to the variant's test.
+    prs_tool_symbol: N
+    category: sample
+    aliases:
+      - sample_size
+      - samplesize
+      - n
+      - n_total
+      - ntotal
+      - total_n
+      - total_sample_size
+      - totalsamplesize
+      - n_samples
+      - nsample
+      - sample_n
+      - sample_num
+      - n_obs
+      - n_analyzed
+      - n_informative
+      - effective_sample_size
+      - n_effective
+      - n_eff
+      - neff
+      - n_effective_samplesize
+      - mantra_n_samples
+      - n_samples_study_level
+      - n_samples_variant_level
+      - n_effective_samples_study_level
+      - n_effective_samples_variant_level
+      - all_total
+      - hm_n
+
+  cases:
+    description: Number of cases contributing to the variant's test.
+    prs_tool_symbol: NCAS
+    category: sample
+    aliases:
+      - n_cases
+      - ncase
+      - ncases
+      - n_case
+      - n_cas
+      - cases_n
+      - cases_total
+      - num_cases
+      - case_n
+      - case_count
+      - n_cases_study_level
+      - all_inv_var_meta_cases
+
+  controls:
+    description: Number of controls contributing to the variant's test.
+    prs_tool_symbol: NCON
+    category: sample
+    aliases:
+      - n_controls
+      - ncontrol
+      - ncontrols
+      - n_control
+      - n_con
+      - controls_n
+      - controls_total
+      - num_controls
+      - control_n
+      - control_count
+      - n_controls_study_level
+      - all_inv_var_meta_controls
+
+  # ------------------------------------------------------------------
+  # Quality and meta-analysis
+  # ------------------------------------------------------------------
+
+  info_score:
+    description: >-
+      Imputation quality (INFO / r-squared). Used to filter poorly imputed
+      variants out of a polygenic score.
+    prs_tool_symbol: INFO
+    category: quality
+    aliases:
+      - info
+      - info_score
+      - info_all
+      - info_ukb
+      - info_ukbb
+      - impute_info
+      - imputation
+      - imputation_quality
+      - imputationaccuracy
+      - imputationinfo
+      - imp_quality
+      - imp_rsqr
+      - impu_rsq
+      - rsq
+      - r2
+      - r2_hat
+      - median_info
+      - variant_info_score
+      - all_info
+      - oncoarray_imputation_r2
+      - minimac_r2
+
+  direction:
+    description: Per-cohort direction-of-effect string from a meta-analysis.
+    prs_tool_symbol: D
+    category: meta
+    aliases:
+      - direction
+      - direct
+      - directions
+      - direction_of_effect
+      - effect_direction
+      - direction_by_study
+      - direction_effects_cohorts
+      - direction_ukbb_tagc
+      - mantra_dir
+      - dir
+      - cohort_dir
+
+  n_studies:
+    description: Number of contributing studies or cohorts in a meta-analysis.
+    prs_tool_symbol: NSTUDY
+    category: meta
+    aliases:
+      - n_studies
+      - nstudies
+      - n_study
+      - num_studies
+      - n_cohorts
+      - ncohort
+      - n_datasets
+
+  confidence_interval_lower:
+    description: Lower bound of the effect-size confidence interval.
+    prs_tool_symbol: CIL
+    category: effect
+    aliases:
+      - ci_lower
+      - cilower
+      - ci_low
+      - lower_ci
+      - l95
+      - or_lower
+      - hm_ci_lower
+
+  confidence_interval_upper:
+    description: Upper bound of the effect-size confidence interval.
+    prs_tool_symbol: CIU
+    category: effect
+    aliases:
+      - ci_upper
+      - ciupper
+      - ci_high
+      - upper_ci
+      - u95
+      - or_upper
+      - hm_ci_upper
+
+# ----------------------------------------------------------------------
+# Layer 3 heuristics.
+#
+# Applied only when Layers 1 and 2 find nothing. Each match reports
+# mapping_method="heuristic" with a confidence below that of a curated alias,
+# so a reviewer can see exactly which columns were guessed at.
+# ----------------------------------------------------------------------
+
+heuristics:
+  suffix:
+    # A trailing token that determines the concept. Covers the ~250
+    # "<analyte>_pval" columns v1 enumerated one by one for a single
+    # metabolomics resource.
+    - suffix: _pval
+      concept: p_value
+      confidence: 0.72
+    - suffix: _pvalue
+      concept: p_value
+      confidence: 0.72
+    - suffix: _p_value
+      concept: p_value
+      confidence: 0.72
+    - suffix: _beta
+      concept: beta
+      confidence: 0.68
+    - suffix: _se
+      concept: standard_error
+      confidence: 0.68
+    - suffix: _stderr
+      concept: standard_error
+      confidence: 0.7
+    - suffix: _or
+      concept: odds_ratio
+      confidence: 0.6
+    - suffix: _maf
+      concept: minor_allele_frequency
+      confidence: 0.68
+    - suffix: _eaf
+      concept: effect_allele_frequency
+      confidence: 0.7
+    - suffix: _zscore
+      concept: z_score
+      confidence: 0.7
+
+  prefix:
+    # Harmonised GWAS Catalog files prefix every standardized column with "hm_".
+    - prefix: hm_
+      strip: true
+      confidence: 0.9
+
+  contains:
+    # Substring evidence, only for phrases with no competing reading.
+    - contains: base_pair_location
+      concept: position
+      confidence: 0.8
+    - contains: effect_allele_freq
+      concept: effect_allele_frequency
+      confidence: 0.8
+    - contains: standard_error
+      concept: standard_error
+      confidence: 0.8
+    - contains: odds_ratio
+      concept: odds_ratio
+      confidence: 0.78
+    - contains: hazard_ratio
+      concept: hazard_ratio
+      confidence: 0.78

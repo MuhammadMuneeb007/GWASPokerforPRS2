@@ -1,0 +1,30 @@
+## metadata line 1: value 1
+## metadata line 2: value 2
+## metadata line 3: value 3
+## metadata line 4: value 4
+## metadata line 5: value 5
+## metadata line 6: value 6
+## metadata line 7: value 7
+## metadata line 8: value 8
+## metadata line 9: value 9
+## metadata line 10: value 10
+## metadata line 11: value 11
+## metadata line 12: value 12
+## metadata line 13: value 13
+## metadata line 14: value 14
+## metadata line 15: value 15
+## metadata line 16: value 16
+## metadata line 17: value 17
+## metadata line 18: value 18
+## metadata line 19: value 19
+## metadata line 20: value 20
+## metadata line 21: value 21
+## metadata line 22: value 22
+## metadata line 23: value 23
+## metadata line 24: value 24
+## metadata line 25: value 25
+
+chromosome	base_pair_location	effect_allele	other_allele	beta	standard_error	effect_allele_frequency	p_value
+6	63979	T	C	-0.000160239	0.0098139	0.101252	0.9869729
+6	63980	G	A	-0.000917427	0.00980197	0.101732	0.9254298
+6	73938	G	A	0.0318572	0.176681	0.000831991	0.8569094

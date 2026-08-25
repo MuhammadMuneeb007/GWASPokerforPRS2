@@ -1,0 +1,15 @@
+# Core runtime dependencies (mirrors [project.dependencies] in pyproject.toml).
+# Install the package itself with:  pip install -e .
+requests>=2.28
+pandas>=1.5
+pyyaml>=6.0
+charset-normalizer>=3.0
+typer>=0.9
+rich>=13.0
+
+# Optional extras are NOT listed here on purpose; install them explicitly:
+#   pip install -e ".[llm]"       transformers + torch  (ELECTRA sample-size fallback)
+#   pip install -e ".[gwaslab]"   downstream harmonisation
+#   pip install -e ".[excel]"     .xlsx summary statistics
+#   pip install -e ".[fuzzy]"     rapidfuzz tiebreaking in search
+#   pip install -e ".[dev]"       pytest, ruff, black
