@@ -242,7 +242,7 @@ last resort when none of those is available — `z-score`. Additional columns ma
 follow. Omitted values are written `#NA`.
 
 That set satisfies every PRS requirement in
-[`MAPPING_SCHEMA.md`](MAPPING_SCHEMA.md). So when a sidecar declares
+[`mapping.md`](mapping.md). So when a sidecar declares
 `GWAS-SSF v1.0`, readiness follows from the declaration and **no byte of the
 data file needs to move**. `assess --force-probe` exists to test that inference
 against the observed header; on the studies checked so far the two agree

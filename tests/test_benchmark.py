@@ -412,3 +412,68 @@ def test_probe_size_summary() -> None:
     assert summary["detection_rate_by_size"]["65536"]["rate"] == pytest.approx(0.5)
     assert summary["detection_rate_by_size"]["262144"]["rate"] == 1.0
     assert "not against externally curated ground truth" in summary["note"]
+
+
+def test_run_does_not_overwrite_the_input_manifest(tmp_path, monkeypatch) -> None:
+    """`--run` without `--update-manifest` must leave the input untouched.
+
+    The manifest holds hand-curated ground truth -- the one thing in this
+    project GWASPoker must never write. Defaulting the write destination to the
+    input put hours of manual curation one stray `--run` away from being
+    rewritten in place.
+    """
+    import shutil
+    from pathlib import Path
+
+    from typer.testing import CliRunner
+
+    from gwaspoker.cli import app
+
+    source = Path(__file__).resolve().parent.parent / "benchmark"
+    manifest = tmp_path / "manifest.csv"
+    shutil.copy(source / "benchmark_manifest_template.csv", manifest)
+    before = manifest.read_bytes()
+
+    def no_network(rows, **_kwargs):
+        for row in rows:
+            row.predicted_prs_ready = "READY"
+        return rows
+
+    monkeypatch.setattr("gwaspoker.benchmark.evaluate.run_predictions", no_network)
+
+    result = CliRunner().invoke(app, ["benchmark", str(manifest), "--run"])
+
+    assert result.exit_code == 0, result.output
+    assert manifest.read_bytes() == before, "the input manifest was modified"
+    assert "--update-manifest" in result.output
+
+
+def test_update_manifest_writes_where_it_is_told(tmp_path, monkeypatch) -> None:
+    """Opting in still works, and still writes somewhere else."""
+    import shutil
+    from pathlib import Path
+
+    from typer.testing import CliRunner
+
+    from gwaspoker.cli import app
+
+    source = Path(__file__).resolve().parent.parent / "benchmark"
+    manifest = tmp_path / "manifest.csv"
+    shutil.copy(source / "benchmark_manifest_template.csv", manifest)
+    before = manifest.read_bytes()
+    destination = tmp_path / "filled.csv"
+
+    def no_network(rows, **_kwargs):
+        for row in rows:
+            row.predicted_prs_ready = "READY"
+        return rows
+
+    monkeypatch.setattr("gwaspoker.benchmark.evaluate.run_predictions", no_network)
+
+    result = CliRunner().invoke(
+        app, ["benchmark", str(manifest), "--run", "--update-manifest", str(destination)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert destination.exists()
+    assert manifest.read_bytes() == before, "the input was modified despite a destination"

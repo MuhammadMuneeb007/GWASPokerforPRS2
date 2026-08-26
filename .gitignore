@@ -69,3 +69,8 @@ md5sum.txt
 
 # Hugging Face model cache, if redirected into the repo
 .hf_cache/
+site/
+
+# `extract` unpacks an archive member into a sibling `<name>_extracted/`
+# directory beside the input; those are working files, never sources.
+*_extracted/

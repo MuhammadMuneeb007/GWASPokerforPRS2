@@ -3,8 +3,11 @@
 API-aware pre-download triage of GWAS summary statistics for PRS workflows.
 
 [![CI](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/ci.yml)
+[![Docs](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/pages.yml/badge.svg)](https://muhammadmuneeb007.github.io/GWASPokerforPRS2/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+**Documentation: <https://muhammadmuneeb007.github.io/GWASPokerforPRS2/>**
 
 ---
 
@@ -97,8 +100,8 @@ flowchart TD
 The decision layer is the boxes between `study discovery` and `user decision`.
 Everything below `full download` is other people's software.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module layout and
-[`docs/API_SOURCES.md`](docs/API_SOURCES.md) for every upstream interface.
+See [`docs/architecture.md`](docs/architecture.md) for module layout and
+[`docs/data-sources.md`](docs/data-sources.md) for every upstream interface.
 
 ---
 
@@ -429,7 +432,7 @@ is why the flag exists.
 `--no-api` skips the structured route entirely.
 
 Verdicts are `READY`, `PARTIAL`, `NOT_READY` or `UNKNOWN`. The exact rules are
-in [`docs/MAPPING_SCHEMA.md`](docs/MAPPING_SCHEMA.md) and in
+in [`docs/mapping.md`](docs/mapping.md) and in
 `readiness/prs.py`, stated once as data.
 
 ---
@@ -455,7 +458,7 @@ These are structural sanity checks on rows the probe already decoded, not GWAS
 QC. GWASPoker applies no INFO/MAF/p-value filters and performs no
 transformations: `log(OR)`, `10**-x` on a −log10 p-value and `chr:pos` splitting
 are all *reported* and left for downstream tools. See
-[`docs/MAPPING_SCHEMA.md`](docs/MAPPING_SCHEMA.md).
+[`docs/mapping.md`](docs/mapping.md).
 
 ## `gwaspoker scan`
 
@@ -725,7 +728,7 @@ number is.
 * **The GWAS Catalog Summary Statistics API is withdrawn.** Every endpoint
   returns HTTP 410 Gone; the v2 documentation says a replacement "is under
   development". GWASPoker measures and reports that status per study rather than
-  assuming it. See [`docs/API_SOURCES.md`](docs/API_SOURCES.md).
+  assuming it. See [`docs/data-sources.md`](docs/data-sources.md).
 * **REST API v2 was unstable when audited.** `/v2/studies` returned HTTP 500 on
   every request on 2026-08-24 while v1 was healthy. GWASPoker falls back
   automatically and records which route answered.
@@ -756,7 +759,7 @@ number is.
 ```bash
 pip install -e ".[dev]"
 
-pytest                    # 378 unit tests, no network
+pytest                    # 665 unit tests, no network
 pytest -m integration     # 15 live-API tests against EBI
 pytest --cov=gwaspoker
 
@@ -771,18 +774,25 @@ The integration suite exists to detect upstream drift and is deselected by
 default.
 
 Project layout, module responsibilities and design decisions are in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+[`docs/architecture.md`](docs/architecture.md).
 
 ---
 
 ## Documentation
 
+Full documentation site: **<https://muhammadmuneeb007.github.io/GWASPokerforPRS2/>**
+
 | Document | Contents |
 | --- | --- |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Layers, module responsibilities, design decisions |
-| [`docs/API_SOURCES.md`](docs/API_SOURCES.md) | Every upstream interface, verified behaviour, fallbacks |
-| [`docs/MAPPING_SCHEMA.md`](docs/MAPPING_SCHEMA.md) | Canonical vocabulary and the exact PRS-readiness rules |
-| [`docs/MIGRATION_NOTES.md`](docs/MIGRATION_NOTES.md) | Audit of v1: what was kept, what was wrong, what changed |
+| [`docs/cli-reference.md`](docs/cli-reference.md) | Every command and flag, generated from `--help` |
+| [`docs/architecture.md`](docs/architecture.md) | Layers, module responsibilities, design decisions |
+| [`docs/data-sources.md`](docs/data-sources.md) | Every upstream interface, verified behaviour, fallbacks |
+| [`docs/mapping.md`](docs/mapping.md) | Canonical vocabulary and the exact PRS-readiness rules |
+| [`docs/migration.md`](docs/migration.md) | Audit of v1: what was kept, what was wrong, what changed |
+| [`docs/failures.md`](docs/failures.md) | What every failure category means |
+| [`docs/configuration.md`](docs/configuration.md) | Every setting, and its precedence |
+| [`docs/reproducibility.md`](docs/reproducibility.md) | What provenance records, and what to report |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
 | [`benchmark/README.md`](benchmark/README.md) | Running the evaluation and curating ground truth |
 | [`examples/`](examples/) | Worked examples with real output |
 

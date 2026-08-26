@@ -113,7 +113,7 @@ For each study, independently establish:
   publication, the README, or the GWAS-SSF metadata; do not read GWASPoker's
   output.
 * **`ground_truth_prs_ready`** — your own verdict against the rules in
-  [`../docs/MAPPING_SCHEMA.md`](../docs/MAPPING_SCHEMA.md).
+  [`../docs/mapping.md`](../docs/mapping.md).
 
 Practical ways to get an independent header:
 

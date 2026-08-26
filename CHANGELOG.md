@@ -96,6 +96,41 @@ labels. No behaviour that was already correct was changed.
   `Direction`, `P_BMD`/`P_LM`/`beta_BMD`/`beta_LM` (multi-analysis files, where
   a blanket rule would silently pick a phenotype), `SNP_hg18`/`SNP_hg19`.
 
+### Command-line behaviour
+
+* **A classified failure no longer surfaces as a Python traceback.** `download`,
+  `extract`, `run` and `benchmark` had no `GWASPokerError` handler, so an
+  expected outcome — a study with no summary-statistics directory, for
+  instance — printed thirty lines of frames and buried the failure category.
+  `main()` now catches it, prints the message and the category, and exits 1. A
+  genuinely unexpected exception still gets its traceback, because that is a bug
+  and the frames are the point.
+
+* **`benchmark --run` no longer overwrites the input manifest.** The write
+  destination defaulted to the manifest that was read, so a run without
+  `--update-manifest` rewrote its own input — a file whose entire purpose is to
+  hold hand-curated ground truth, the one thing in this project GWASPoker must
+  never write. Writing back is now opt-in, and the run says so.
+
+### Documentation
+
+* **A documentation site**, built with MkDocs Material and deployed to GitHub
+  Pages from `main`: <https://muhammadmuneeb007.github.io/GWASPokerforPRS2/>.
+  Nineteen pages covering installation, each command, the mapping and validation
+  models, the readiness rules, configuration, failure categories, benchmarking
+  and reproducibility.
+* **The CLI reference is generated** from the CLI's own `--help`
+  (`docs/generate_cli_reference.py`), so it cannot describe a program that does
+  not exist.
+* **`tests/test_docs.py`** enforces that: every command has a section, every
+  flag appears on the published page, every nav entry resolves, every page is
+  reachable, every internal link resolves, and every failure category and
+  configuration setting named in prose is real.
+* `docs/ARCHITECTURE.md`, `MAPPING_SCHEMA.md`, `API_SOURCES.md` and
+  `MIGRATION_NOTES.md` were renamed to lower-case site paths
+  (`architecture.md`, `mapping.md`, `data-sources.md`, `migration.md`); all
+  references were updated.
+
 ### Housekeeping
 
 * The User-Agent is derived from `__version__` instead of being repeated as a
@@ -103,10 +138,11 @@ labels. No behaviour that was already correct was changed.
 * Project URLs corrected to `MuhammadMuneeb007/GWASPokerforPRS2`; they pointed
   at a repository that does not exist.
 * GitHub Actions CI added (`.github/workflows/ci.yml`): ruff, black and the unit
-  suite on Python 3.9 and 3.13, Linux and Windows, so test status is visible
-  from the repository. The live integration suite is `workflow_dispatch` only —
-  running it on every push would put avoidable load on ftp.ebi.ac.uk.
-* 91 new tests (`tests/test_robustness.py`), organised by the diagnosis each
+  suite on Python 3.9 and 3.13, Linux and Windows, plus a `mkdocs build
+  --strict` job, so test and docs status are visible from the repository. The
+  live integration suite is `workflow_dispatch` only — running it on every push
+  would put avoidable load on ftp.ebi.ac.uk.
+* 107 new tests (`tests/test_robustness.py`), organised by the diagnosis each
   one rules out; 5 new fixtures — an HTML landing page, an S3 XML error
   document, a tar and a zip whose data sits behind metadata members, and plain
   text served under a `.gz` name.

@@ -1,0 +1,108 @@
+site_name: GWASPoker
+site_description: API-aware pre-download triage of GWAS summary statistics for PRS workflows
+site_url: https://muhammadmuneeb007.github.io/GWASPokerforPRS2/
+repo_url: https://github.com/MuhammadMuneeb007/GWASPokerforPRS2
+repo_name: MuhammadMuneeb007/GWASPokerforPRS2
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; Muhammad Muneeb
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - content.tabs.link
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Using GWASPoker:
+      - Find Studies: search.md
+      - Assess for PRS: assess.md
+      - Inspect a File: probe-scan.md
+      - Download and Extract: download-extract.md
+      - Direct URLs and Local Files: inputs.md
+  - How It Works:
+      - Architecture: architecture.md
+      - Column Mapping: mapping.md
+      - Value Validation: validation.md
+      - PRS Readiness Rules: readiness.md
+      - Data Sources: data-sources.md
+  - Reference:
+      - CLI Reference: cli-reference.md
+      - Configuration: configuration.md
+      - Failure Categories: failures.md
+      - Benchmarking: benchmarking.md
+      - Reproducibility: reproducibility.md
+      - Migration from v1: migration.md
+      - Contributing: contributing.md
+      - Changelog: changelog.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - docs
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/MuhammadMuneeb007/GWASPokerforPRS2
+    - icon: fontawesome/solid/graduation-cap
+      link: https://scholar.google.com/citations?user=X0xdltIAAAAJ

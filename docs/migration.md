@@ -5,7 +5,7 @@ This document records the audit of the original implementation
 the installable `gwaspoker` package.
 
 Audit date: 2026-08-24. Live API behaviour recorded in
-[`API_SOURCES.md`](API_SOURCES.md) was verified on the same date.
+[`data-sources.md`](data-sources.md) was verified on the same date.
 
 ---
 
@@ -352,7 +352,7 @@ writes named artefacts:
 ## 7. Findings that change the v2 design
 
 Three live-API facts, verified 2026-08-24, materially affect the architecture.
-They are documented in full in [`API_SOURCES.md`](API_SOURCES.md).
+They are documented in full in [`data-sources.md`](data-sources.md).
 
 1. **The GWAS Catalog Summary Statistics REST API is deprecated.**
    `https://www.ebi.ac.uk/gwas/summary-statistics/api/...` returns

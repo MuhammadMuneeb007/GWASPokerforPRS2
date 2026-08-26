@@ -1224,9 +1224,19 @@ def benchmark(
             harmonised=harmonised or "auto",
             progress=on_progress,
         )
-        destination = update_manifest or manifest_path
-        write_manifest(rows, destination)
-        console.print(f"[green]Wrote predictions to[/green] {destination}")
+        # Writing back is opt-in. The manifest holds hand-curated ground truth
+        # -- the one thing in this project GWASPoker must never write -- and
+        # overwriting the input by default puts hours of manual curation one
+        # stray `--run` away from being rewritten in place. Predictions stay in
+        # memory for scoring unless a destination is named.
+        if update_manifest is not None:
+            write_manifest(rows, update_manifest)
+            console.print(f"[green]Wrote predictions to[/green] {update_manifest}")
+        else:
+            console.print(
+                "[dim]Predictions were not written back; "
+                "pass --update-manifest PATH to save them.[/dim]"
+            )
 
     sweep_summary = None
     if probe_size_sweep:
@@ -1407,12 +1417,32 @@ def _fmt_rate(value: Optional[float]) -> str:
 
 
 def main() -> None:
-    """Console-script entry point."""
+    """Console-script entry point.
+
+    Commands catch :class:`GWASPokerError` where they can add context ("Scan
+    failed: ..."). This is the backstop for the paths that cannot: a study with
+    no summary-statistics directory, an unreadable archive, a withdrawn
+    endpoint. Those are *classified, expected* outcomes, and printing a Python
+    traceback for one misrepresents an answer as a crash -- and buries the
+    failure category under thirty lines of frames.
+
+    A genuinely unexpected exception still gets its traceback, because that is
+    a bug and the frames are the point.
+    """
+    from gwaspoker.failures import GWASPokerError
+
     try:
         app()
     except KeyboardInterrupt:
         typer.echo("\nInterrupted.", err=True)
         sys.exit(130)
+    except GWASPokerError as exc:
+        from gwaspoker.reporting import console as report_console
+
+        category = exc.category.value if exc.category else "unknown"
+        report_console.console.print(f"[red]Error:[/red] {exc}")
+        report_console.console.print(f"[dim]Failure category: {category}[/dim]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
