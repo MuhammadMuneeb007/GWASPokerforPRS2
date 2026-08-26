@@ -40,6 +40,11 @@ jobs:
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on if it is not already, rather than failing with
+          # "Get Pages site failed" and requiring a visit to repository
+          # settings. Needs the `pages: write` permission granted above.
+          enablement: true
 
       - name: Build documentation
         # --strict turns a broken internal link into a build failure, so a

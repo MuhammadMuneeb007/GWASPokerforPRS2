@@ -137,6 +137,12 @@ labels. No behaviour that was already correct was changed.
   literal, so it cannot misattribute a benchmark run.
 * Project URLs corrected to `MuhammadMuneeb007/GWASPokerforPRS2`; they pointed
   at a repository that does not exist.
+* **A help-text test no longer depends on the terminal width.** Rich truncates
+  long option names when the terminal is narrow — at 70 columns
+  `--no-check-files` renders as `--no-check-fil…` — so a test asserting that the
+  help documents that flag passed on a wide local terminal and failed on CI,
+  which has no TTY. `tests/conftest.py` now pins `COLUMNS` before Rich is
+  imported.
 * GitHub Actions CI added (`.github/workflows/ci.yml`): ruff, black and the unit
   suite on Python 3.9 and 3.13, Linux and Windows, plus a `mkdocs build
   --strict` job, so test and docs status are visible from the repository. The
