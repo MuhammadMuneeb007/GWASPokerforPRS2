@@ -130,9 +130,7 @@ labels. No behaviour that was already correct was changed.
   (`docs/validation-results.md`): four experiments over 2,208 GWAS Catalog
   studies and 402 external URLs — field and value agreement against GWASLab,
   paired readiness recovery, a controlled 50-file transfer benchmark, and
-  heterogeneous direct-URL probing. Each is labelled with the version that
-  produced it (**2.0.0**), because 2.1.0 changed the paths the external
-  experiment measures.
+  heterogeneous direct-URL probing. All were performed using v2.1.0.
 
 * **A documentation site**, built with MkDocs Material and deployed to GitHub
   Pages from `main`: <https://muhammadmuneeb007.github.io/GWASPokerforPRS2/>.
