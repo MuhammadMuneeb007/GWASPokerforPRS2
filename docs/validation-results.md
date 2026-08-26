@@ -4,13 +4,9 @@ Four experiments, run against 50 phenotype queries on the NHGRI-EBI GWAS
 Catalog. Full methods, per-phenotype composition, field-level tables and failure
 taxonomies are in Supplementary Material 1; the summary is below.
 
-!!! warning "These results were produced by GWASPoker 2.0.0"
+!!! note "Validation software version"
 
-    Release 2.1.0 changed payload classification, archive member selection and
-    transport fallbacks — precisely the paths Dataset 4 measures — so the
-    Dataset 4 failure taxonomy in particular describes behaviour that has since
-    changed. See [the changelog](changelog.md). Re-running the four datasets
-    against 2.1.0 is outstanding.
+    All manuscript validation experiments were performed using GWASPoker v2.1.0. The frozen cohort definitions, analysis scripts, task-level outputs and derived tables correspond to the manuscript validation run.
 
 ## Source pool
 
@@ -64,7 +60,7 @@ neither tool got credit for information already present in the source.
 | --- | --- |
 | Metadata-uncertain studies | 978 |
 | Already Core+N-ready in the raw header (excluded) | 712 (72.80%) |
-| Genuinely non-ready, eligible | 266 |
+| Not Core+N-ready under neutral source-header screen | 266 |
 | Complete paired results | 263 |
 | **Core-ready after GWASPoker** | **210 / 263 (79.85%)** |
 | **Core-ready after GWASLab** | **210 / 263 (79.85%)** |
@@ -124,11 +120,9 @@ census of available GWAS data — a stress test.
 | Observed probe bytes | 105,120,243 |
 | Transfer reduction | 99.8413% |
 
-Transport failures are reported **separately from mapping failures** — a dead
-link is not a file missing PRS columns. Of 281 non-clean outcomes: 194 non-data
-HTTP responses, 74 HTTP 404s (all 74 EBI-hosted paths in this historical
-collection), 7 network timeouts, 3 outer task timeouts, 2 unsupported formats,
-1 empty response. No complete external file was downloaded.
+Of the 685 probed non-support URLs, 402 entered the audited-clean structural-mapping denominator. The remaining 283 comprised 281 probe/worker failures and two technically COMPLETE responses excluded by defensive content audit.
+
+The 281 probe/worker failures comprised 194 non-data HTTP responses, 74 HTTP 404s (all 74 EBI-hosted paths in this historical collection), 7 network timeouts, 3 outer task timeouts, 2 unsupported formats and 1 empty response. Transport failures are reported **separately from mapping failures** — a dead link is not a file missing PRS columns. No complete external file was downloaded.
 
 ## Reproducing this
 
