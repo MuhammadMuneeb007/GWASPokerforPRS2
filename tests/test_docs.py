@@ -27,29 +27,27 @@ SHARED_FLAGS = frozenset(
     {"--config", "--failure-log", "--verbose", "--quiet", "--help", "-v", "-q"}
 )
 
-_BOX = re.compile(r"[│┌┐└┘─╭╮╰╯├┤┬┴┼]")
-_FLAG = re.compile(r"(--[a-z0-9][a-z0-9-]*)")
-
-
-def command_help(*args: str) -> str:
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", COLUMNS="400", TERM="dumb")
-    proc = subprocess.run(
-        [sys.executable, "-m", "gwaspoker.cli", *args, "--help"],
-        cwd=REPO,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=env,
-        check=True,
-    )
-    return _BOX.sub(" ", proc.stdout)
-
 
 def flags_of(command: str) -> set[str]:
-    """Every long option the command's own help lists."""
-    text = command_help(command)
-    options = text.split("Options", 1)[-1]
-    return set(_FLAG.findall(options)) - SHARED_FLAGS
+    """Every long option the command actually declares.
+
+    Read from Click's parameter objects, not from rendered ``--help``. Rich
+    truncates long option names in its output -- ``--no-check-files`` becomes
+    ``--no-check-fil...`` -- by an amount that varies with the Rich version, so
+    a test that parsed the rendering passed locally and failed on CI.
+    """
+    import typer.main
+
+    from gwaspoker.cli import app
+
+    subcommand = typer.main.get_command(app).commands[command]
+    names = {
+        opt
+        for param in subcommand.params
+        for opt in (*param.opts, *param.secondary_opts)
+        if opt.startswith("--")
+    }
+    return names - SHARED_FLAGS
 
 
 @pytest.fixture(scope="module")

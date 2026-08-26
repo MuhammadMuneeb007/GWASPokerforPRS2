@@ -1,20 +1,29 @@
-"""Regenerate ``docs/cli-reference.md`` from the CLI's own ``--help`` output.
+"""Regenerate ``docs/cli-reference.md`` from the CLI's own parameter objects.
 
-Hand-written flag tables drift the moment an option is added. This reads the
-help text Typer produces, so the page cannot disagree with the program.
+Hand-written flag tables drift the moment an option is added, so this page is
+generated. It reads Click's parameter objects directly rather than parsing the
+rendered ``--help`` output: Rich sizes and *truncates* that output, so
+``--no-check-files`` becomes ``--no-check-fil…`` at some widths and Rich
+versions, and a page generated on one machine disagreed with the same page
+generated on another.
 
 Run it from the repository root after changing any command signature::
 
     python docs/generate_cli_reference.py
+
+``tests/test_docs.py`` fails if you forget.
 """
 
 from __future__ import annotations
 
-import os
-import re
-import subprocess
-import sys
 from pathlib import Path
+from typing import Any
+
+import click
+import typer.main
+
+from gwaspoker import __version__
+from gwaspoker.cli import app
 
 REPO = Path(__file__).resolve().parent.parent
 OUTPUT = REPO / "docs" / "cli-reference.md"
@@ -30,15 +39,17 @@ COMMANDS = [
     ("benchmark", "Score predictions against externally curated ground truth."),
 ]
 
+#: Options every command inherits, documented once in a shared table.
+SHARED = frozenset({"--config", "--failure-log", "--verbose", "--quiet", "--help"})
+
 #: A short note on what each command is actually for, beyond the one-liner.
 NOTES = {
-    "search": """Two stages. The first asks the GWAS Catalog for studies matching the
-trait; the second checks, per study, whether a file exists, whether a
-`-meta.yaml` sidecar exists, whether a harmonised version is published and what
-`file_type` the sidecar declares. The second stage costs two to three requests
-per study and is parallelised across `--workers` threads that share one
-process-wide rate limiter, so it overlaps latency without raising the request
-rate.
+    "search": """Two stages. The first asks the GWAS Catalog for studies matching the trait; the
+second checks, per study, whether a file exists, whether a `-meta.yaml` sidecar
+exists, whether a harmonised version is published and what `file_type` the
+sidecar declares. The second stage costs two to three requests per study and is
+parallelised across `--workers` threads that share one process-wide rate
+limiter, so it overlaps latency without raising the request rate.
 
 `--no-check-files` skips the second stage entirely. Those columns then read `?`,
 which means *not checked* — never *absent*.""",
@@ -73,7 +84,10 @@ values to make a parser succeed.
 
 `--rename` gives columns their canonical concept names; `--rename-symbols` gives
 them the short forms PRS tools expect (`CHR`, `BP`, `A1`, `A2`, `BETA`, `SE`,
-`P`).""",
+`P`).
+
+An archive member is unpacked into a sibling `<name>_extracted/` directory
+beside the **input** file, not beside `--output`.""",
     "run": """Search, assess and rank in one pass. Ranks candidates by readiness first, then
 by sample size. Add `--download` to fetch the studies that came back `READY`.""",
     "benchmark": """Scores predictions against a manifest of externally curated ground truth.
@@ -83,146 +97,99 @@ by sample size. Add `--download` to fetch the studies that came back `READY`."""
     GWASPoker never writes the ground-truth columns. Scoring a parser against
     labels it produced itself measures nothing, and the evaluator warns when a
     manifest looks like that has happened. See
-    [Benchmarking](benchmarking.md).""",
+    [Benchmarking](benchmarking.md).
+
+    `--run` keeps predictions in memory; it does **not** write them back over
+    the manifest you gave it. Pass `--update-manifest PATH` to save them
+    somewhere.""",
 }
 
-BOX = re.compile(r"[│┌┐└┘─╭╮╰╯├┤┬┴┼]")
+
+def escape(text: str) -> str:
+    """Make a string safe inside a Markdown table cell."""
+    return text.replace("|", "&#124;").replace("\n", " ").strip()
 
 
-def clean(text: str) -> list[str]:
-    """Strip Rich's box drawing and collapse the result to plain lines."""
-    lines = []
-    for raw in text.splitlines():
-        line = BOX.sub(" ", raw).rstrip()
-        lines.append(line)
-    return lines
+def type_label(param: click.Parameter) -> str:
+    """A readable type, including the bounds of a constrained range.
 
-
-def section(lines: list[str], title: str) -> list[str]:
-    """Return the lines under a Rich panel heading such as ``Options``."""
-    out: list[str] = []
-    collecting = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped == title:
-            collecting = True
-            continue
-        if collecting:
-            if stripped in ("Options", "Arguments", "Commands") and stripped != title:
-                break
-            out.append(line)
-    while out and not out[-1].strip():
-        out.pop()
-    return out
-
-
-def parse_rows(lines: list[str]) -> list[tuple[str, str, str]]:
-    """Turn help lines into ``(flags, type, description)`` triples.
-
-    Continuation lines -- Rich wraps long descriptions -- are folded into the
-    row above rather than becoming rows of their own.
+    Attributes rather than ``isinstance``: Typer ships its own subclasses
+    (``typer._click.types.IntRange``), so checking against Click's own classes
+    silently drops the bounds.
     """
-    rows: list[tuple[str, str, str]] = []
-    for line in lines:
-        if not line.strip():
-            continue
-        match = re.match(
-            r"^\s*(\*?)\s*(--?[\w-]+(?:\s+--?[\w-]+)*)\s{2,}(<[^>]*>(?:\s*\[[^\]]*\])?)?\s*(.*)$",
-            line,
-        )
-        if match:
-            required, flags, kind, desc = match.groups()
-            flags = re.sub(r"\s+", " ", flags.strip())
-            label = ("**required** " if required else "") + desc.strip()
-            rows.append((flags, (kind or "").strip(), label))
-        elif rows:
-            flags, kind, desc = rows[-1]
-            rows[-1] = (flags, kind, (desc + " " + line.strip()).strip())
-    return rows
+    kind = param.type
+    if getattr(param, "is_flag", False) or kind.name == "boolean":
+        return ""
+    name = kind.name
+    low, high = getattr(kind, "min", None), getattr(kind, "max", None)
+    if low is not None or high is not None:
+        name = f"{name} {low if low is not None else '-'}..{high if high is not None else '-'}"
+    return f"`{name}`"
 
 
-def parse_arguments(lines: list[str]) -> list[tuple[str, str, str]]:
-    rows: list[tuple[str, str, str]] = []
-    for line in lines:
-        if not line.strip():
-            continue
-        match = re.match(r"^\s*(\*?)\s*(\{?[\w_]+\}?)\s{2,}(<[^>]*>)?\s*(.*)$", line)
-        if match:
-            required, name, kind, desc = match.groups()
-            name = name.strip("{}")
-            label = ("**required** " if required else "") + desc.strip()
-            rows.append((name, (kind or "").strip(), label))
-        elif rows:
-            name, kind, desc = rows[-1]
-            rows[-1] = (name, kind, (desc + " " + line.strip()).strip())
-    return rows
+def default_label(param: click.Parameter) -> str:
+    value = param.default
+    if value is None or param.required:
+        return ""
+    if isinstance(value, bool):
+        # A boolean flag pair reads better as which half is on by default.
+        if param.secondary_opts:
+            on = param.opts[0] if value else param.secondary_opts[0]
+            return f"<br>_Default: `{on.lstrip('-')}`_"
+        return "" if value is False else "<br>_Default: `on`_"
+    if callable(value):
+        return ""
+    return f"<br>_Default: `{value}`_"
 
 
-def flag_cell(value: str) -> str:
-    """Render the flag column as code, one span per alias."""
-    value = value.strip()
-    if not value or value.startswith(("`", "[")):
-        return value
-    return ", ".join(f"`{part}`" for part in value.split())
-
-
-def type_cell(value: str) -> str:
-    """Render the type column, whose angle brackets Markdown would eat as HTML."""
-    value = re.sub(r"\s+", " ", value).strip()
-    return f"`{value}`" if value else ""
-
-
-#: Typer prints `[default: x]`, and Rich may fold the line before its closing
-#: bracket. Both shapes are normalised to one italic sentence.
-_DEFAULT_CLOSED = re.compile(r"\[default:\s*([^\]]*)\]")
-_DEFAULT_OPEN = re.compile(r"\[default:\s*(.*)$")
-
-
-def desc_cell(value: str) -> str:
-    value = value.replace("|", "&#124;").replace("[required]", "").strip()
-    value = _DEFAULT_CLOSED.sub(lambda m: f"<br>_Default: `{m.group(1).strip()}`_", value)
-    value = _DEFAULT_OPEN.sub(
-        lambda m: f"<br>_Default: `{m.group(1).strip().rstrip(']')}`_", value
-    )
-    return re.sub(r"\s{2,}", " ", value).strip()
+def flag_label(param: click.Parameter) -> str:
+    names = list(param.opts) + list(param.secondary_opts)
+    return ", ".join(f"`{n}`" for n in names)
 
 
 def md_table(headers: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
-    structured = headers[0] in ("Flag", "Argument")
-
-    def render(row: tuple[str, ...]) -> str:
-        cells = list(row)
-        if structured and len(cells) == 3:
-            cells = [flag_cell(cells[0]), type_cell(cells[1]), desc_cell(cells[2])]
-        else:
-            cells = [c.replace("|", "&#124;") for c in cells]
-        return "| " + " | ".join(cells) + " |"
-
-    body = "\n".join(render(row) for row in rows if any(row))
+    body = "\n".join("| " + " | ".join(r) + " |" for r in rows)
     return (
         "| " + " | ".join(headers) + " |\n"
         "| " + " | ".join("---" for _ in headers) + " |\n" + body
     )
 
 
-def help_for(*args: str) -> str:
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", COLUMNS="400", TERM="dumb")
-    proc = subprocess.run(
-        [sys.executable, "-m", "gwaspoker.cli", *args, "--help"],
-        cwd=REPO, capture_output=True, text=True, encoding="utf-8", env=env, check=True,
-    )
-    return proc.stdout
+def command_sections(command: click.Command) -> list[str]:
+    arguments: list[tuple[str, ...]] = []
+    options: list[tuple[str, ...]] = []
+
+    for param in command.params:
+        if isinstance(param, click.Argument):
+            help_text = escape(getattr(param, "help", "") or "")
+            required = "**required** " if param.required else ""
+            arguments.append((f"`{param.name}`", type_label(param), required + help_text))
+            continue
+        if set(param.opts) & SHARED:
+            continue
+        help_text = escape(getattr(param, "help", "") or "")
+        required = "**required** " if param.required else ""
+        options.append(
+            (flag_label(param), type_label(param), required + help_text + default_label(param))
+        )
+
+    parts: list[str] = []
+    if arguments:
+        parts += ["### Arguments", "", md_table(("Argument", "Type", "Description"), arguments), ""]
+    if options:
+        parts += ["### Options", "", md_table(("Flag", "Type", "Description"), options), ""]
+    return parts
 
 
 def main() -> None:
-    from gwaspoker import __version__
+    root: Any = typer.main.get_command(app)
 
     parts = [
         "# CLI Reference",
         "",
-        "!!! note \"Generated\"",
+        '!!! note "Generated"',
         "",
-        "    This page is produced from the CLI's own `--help` output by",
+        "    This page is produced from the CLI's own parameter definitions by",
         "    `docs/generate_cli_reference.py`, so it cannot drift from the program.",
         f"    Generated for GWASPoker **{__version__}**.",
         "",
@@ -253,7 +220,11 @@ def main() -> None:
         md_table(
             ("Flag", "Purpose"),
             [
-                ("`--config PATH`", "A `gwaspoker.toml` or `.yaml` config file. See [Configuration](configuration.md)."),
+                (
+                    "`--config PATH`",
+                    "A `gwaspoker.toml` or `.yaml` config file. "
+                    "See [Configuration](configuration.md).",
+                ),
                 ("`--failure-log PATH`", "Append classified failures as JSON Lines."),
                 ("`-v`, `-vv`", "INFO, then DEBUG logging."),
                 ("`-q`, `--quiet`", "Only report errors."),
@@ -266,22 +237,16 @@ def main() -> None:
     ]
 
     for name, summary in COMMANDS:
-        text = clean(help_for(name))
-        usage = next((line.strip() for line in text if line.strip().startswith("Usage:")), "")
-        usage = usage.replace("python -m gwaspoker.cli", "gwaspoker").replace("{", "").replace("}", "")
+        command = root.commands[name]
+        usage = f"gwaspoker {name} [OPTIONS]"
+        positional = [p.name for p in command.params if isinstance(p, click.Argument)]
+        if positional:
+            usage += " " + " ".join(p.upper() for p in positional)
 
         parts += [f"## `{name}`", "", summary, "", "```text", usage, "```", ""]
         if name in NOTES:
             parts += [NOTES[name], ""]
-
-        arguments = parse_arguments(section(text, "Arguments"))
-        if arguments:
-            parts += ["### Arguments", "", md_table(("Argument", "Type", "Description"), arguments), ""]
-
-        options = parse_rows(section(text, "Options"))
-        if options:
-            parts += ["### Options", "", md_table(("Flag", "Type", "Description"), options), ""]
-
+        parts += command_sections(command)
         parts += ["---", ""]
 
     parts += [
@@ -290,16 +255,29 @@ def main() -> None:
         md_table(
             ("Code", "Meaning"),
             [
-                ("`0`", "Success. A `NOT_READY` verdict is still a success: the question was answered."),
-                ("`1`", "The operation failed — the study was not found, the file was unreachable, no header could be recovered. The failure category is printed and, with `--failure-log`, recorded."),
-                ("`2`", "The command line itself was wrong — an unknown flag, a missing required argument, a value outside its allowed range."),
+                (
+                    "`0`",
+                    "Success. A `NOT_READY` verdict is still a success: "
+                    "the question was answered.",
+                ),
+                (
+                    "`1`",
+                    "The operation failed — the study was not found, the file was "
+                    "unreachable, no header could be recovered. The failure category is "
+                    "printed and, with `--failure-log`, recorded.",
+                ),
+                (
+                    "`2`",
+                    "The command line itself was wrong — an unknown flag, a missing "
+                    "required argument, a value outside its allowed range.",
+                ),
             ],
         ),
         "",
     ]
 
     OUTPUT.write_text("\n".join(parts) + "\n", encoding="utf-8")
-    print(f"wrote {OUTPUT.relative_to(REPO)} ({len(parts)} blocks)")
+    print(f"wrote {OUTPUT.relative_to(REPO)}")
 
 
 if __name__ == "__main__":

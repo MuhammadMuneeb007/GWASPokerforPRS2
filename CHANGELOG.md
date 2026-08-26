@@ -137,12 +137,14 @@ labels. No behaviour that was already correct was changed.
   literal, so it cannot misattribute a benchmark run.
 * Project URLs corrected to `MuhammadMuneeb007/GWASPokerforPRS2`; they pointed
   at a repository that does not exist.
-* **A help-text test no longer depends on the terminal width.** Rich truncates
-  long option names when the terminal is narrow — at 70 columns
-  `--no-check-files` renders as `--no-check-fil…` — so a test asserting that the
-  help documents that flag passed on a wide local terminal and failed on CI,
-  which has no TTY. `tests/conftest.py` now pins `COLUMNS` before Rich is
-  imported.
+* **Nothing asserts against rendered `--help` output any more.** Rich truncates
+  long option names to fit its table — `--no-check-files` becomes
+  `--no-check-fil…` — by an amount that varies with the terminal width, the Rich
+  version and the Click version (CI resolved rich 15.0.0 and click 8.4.2 against
+  14.2.0 and 8.1.8 locally). A test and the reference generator both parsed that
+  output, so both passed locally and failed on CI. Both now read Click's
+  parameter objects directly, which is the actual source of truth and is immune
+  to rendering. `tests/conftest.py` additionally pins `COLUMNS`.
 * GitHub Actions CI added (`.github/workflows/ci.yml`): ruff, black and the unit
   suite on Python 3.9 and 3.13, Linux and Windows, plus a `mkdocs build
   --strict` job, so test and docs status are visible from the repository. The

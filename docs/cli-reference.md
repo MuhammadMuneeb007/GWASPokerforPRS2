@@ -2,7 +2,7 @@
 
 !!! note "Generated"
 
-    This page is produced from the CLI's own `--help` output by
+    This page is produced from the CLI's own parameter definitions by
     `docs/generate_cli_reference.py`, so it cannot drift from the program.
     Generated for GWASPoker **2.1.0**.
 
@@ -42,16 +42,15 @@ gwaspoker --version
 Find GWAS Catalog studies for a phenotype.
 
 ```text
-Usage: gwaspoker search [OPTIONS]
+gwaspoker search [OPTIONS]
 ```
 
-Two stages. The first asks the GWAS Catalog for studies matching the
-trait; the second checks, per study, whether a file exists, whether a
-`-meta.yaml` sidecar exists, whether a harmonised version is published and what
-`file_type` the sidecar declares. The second stage costs two to three requests
-per study and is parallelised across `--workers` threads that share one
-process-wide rate limiter, so it overlaps latency without raising the request
-rate.
+Two stages. The first asks the GWAS Catalog for studies matching the trait; the
+second checks, per study, whether a file exists, whether a `-meta.yaml` sidecar
+exists, whether a harmonised version is published and what `file_type` the
+sidecar declares. The second stage costs two to three requests per study and is
+parallelised across `--workers` threads that share one process-wide rate
+limiter, so it overlaps latency without raising the request rate.
 
 `--no-check-files` skips the second stage entirely. Those columns then read `?`,
 which means *not checked* — never *absent*.
@@ -60,24 +59,19 @@ which means *not checked* — never *absent*.
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--trait`, `-t` | `<str>` | **required** Phenotype or trait to search for. |
-| `--population`, `-p` | `<str>` | Ancestry filter, e.g. European, East Asian. |
-| `--limit`, `-n` | `<int>` | Maximum studies to return. <br>_Default: `25`_ |
+| `--trait`, `-t` | `str` | **required** Phenotype or trait to search for. |
+| `--population`, `-p` | `str` | Ancestry filter, e.g. European, East Asian. |
+| `--limit`, `-n` | `int` | Maximum studies to return.<br>_Default: `25`_ |
 | `--sumstats-only` |  | Only studies with full summary statistics. |
-| `--check-files`, `--no-check-files` |  | Look up File / SSF Meta / Harmonised / GWAS-SSF / PRS / Probe for each result. Two or three requests per study; --no-check-files leaves those columns as '?' and returns immediately. <br>_Default: `check-files`_ |
-| `--workers`, `-w` | `<int range> [1<=x<=16]` | Threads for the file-availability stage (default 6). All workers share one process-wide rate limiter, so this overlaps latency rather than raising the request rate. |
-| `--exclude` | `<str>` | Drop studies whose reported trait contains this text (case-insensitive, repeatable). |
-| `--default-excludes`, `--no-default-excludes` |  | Also exclude 'Gene-based burden', which are not variant-level summary statistics and cannot yield PRS weights. <br>_Default: `default-excludes`_ |
-| `--llm`, `--no-llm` |  | Allow the ELECTRA fallback for unresolved sample counts. <br>_Default: `no-llm`_ |
+| `--check-files`, `--no-check-files` |  | Look up File / SSF Meta / Harmonised / GWAS-SSF / PRS / Probe for each result. Two or three requests per study; --no-check-files leaves those columns as '?' and returns immediately.<br>_Default: `check-files`_ |
+| `--workers`, `-w` | `int range 1..16` | Threads for the file-availability stage (default 6). All workers share one process-wide rate limiter, so this overlaps latency rather than raising the request rate. |
+| `--exclude` | `str` | Drop studies whose reported trait contains this text (case-insensitive, repeatable). |
+| `--default-excludes`, `--no-default-excludes` |  | Also exclude 'Gene-based burden', which are not variant-level summary statistics and cannot yield PRS weights.<br>_Default: `default-excludes`_ |
+| `--llm`, `--no-llm` |  | Allow the ELECTRA fallback for unresolved sample counts.<br>_Default: `no-llm`_ |
 | `--show-provenance` |  | Print where each sample count came from. |
-| `--format`, `-f` | `<str>` | table, csv, json or html. <br>_Default: `table`_ |
-| `--output`, `-o` | `<path>` | Write results to this path. |
-| `--provenance` | `<path>` | Write a provenance JSON file. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `--format`, `-f` | `str` | table, csv, json or html.<br>_Default: `table`_ |
+| `--output`, `-o` | `path` | Write results to this path. |
+| `--provenance` | `path` | Write a provenance JSON file. |
 
 ---
 
@@ -86,7 +80,7 @@ which means *not checked* — never *absent*.
 Inspect a remote file's header without downloading it.
 
 ```text
-Usage: gwaspoker probe [OPTIONS] target
+gwaspoker probe [OPTIONS]
 ```
 
 Fetches a bounded prefix and reports what is in it: compression, encoding,
@@ -96,26 +90,16 @@ verdict — use `assess` for that.
 The byte ceiling is `--probe-bytes`, and it is a ceiling in every path: HTTP
 `Range` when the server supports it, a stream closed early when it does not.
 
-### Arguments
-
-| Argument | Type | Description |
-| --- | --- | --- |
-| `target` | `<str>` | **required** A GCST accession or an http(s) URL. |
-
 ### Options
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--probe-bytes` | `<int>` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
-| `--harmonised` | `<str>` | auto (default), yes or no -- prefer the harmonised file. |
-| `--format`, `-f` | `<str>` | table, csv, json or html. <br>_Default: `table`_ |
-| `--output`, `-o` | `<path>` | Write results to this path. |
-| `--provenance` | `<path>` | Write a provenance JSON file. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `target` | `str` | **required** A GCST accession or an http(s) URL. |
+| `--probe-bytes` | `int` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
+| `--harmonised` | `str` | auto (default), yes or no -- prefer the harmonised file. |
+| `--format`, `-f` | `str` | table, csv, json or html.<br>_Default: `table`_ |
+| `--output`, `-o` | `path` | Write results to this path. |
+| `--provenance` | `path` | Write a provenance JSON file. |
 
 ---
 
@@ -124,7 +108,7 @@ The byte ceiling is `--probe-bytes`, and it is a ceiling in every path: HTTP
 Decide whether a study's summary statistics are usable for PRS.
 
 ```text
-Usage: gwaspoker assess [OPTIONS] targets...
+gwaspoker assess [OPTIONS]
 ```
 
 The main command. Prefers structured metadata: when a `-meta.yaml` sidecar
@@ -136,30 +120,20 @@ probe.
 verifying that the two routes agree. `--no-api` disables the metadata route
 entirely.
 
-### Arguments
-
-| Argument | Type | Description |
-| --- | --- | --- |
-| `targets` | `<str>` | **required** One or more GCST accessions or URLs. |
-
 ### Options
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--target` | `<str>` | Downstream workflow. Currently: prs. <br>_Default: `prs`_ |
+| `targets` | `str` | **required** One or more GCST accessions or URLs. |
+| `--target` | `str` | Downstream workflow. Currently: prs.<br>_Default: `prs`_ |
 | `--force-probe` |  | Probe the file even when the structured metadata was sufficient. Needed to compare the two routes in a benchmark. |
 | `--no-api` |  | Skip the structured route and go straight to the probe. |
-| `--probe-bytes` | `<int>` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
-| `--harmonised` | `<str>` | auto (default), yes or no -- prefer the harmonised file. |
+| `--probe-bytes` | `int` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
+| `--harmonised` | `str` | auto (default), yes or no -- prefer the harmonised file. |
 | `--show-mapping` |  | Print the column mapping. |
-| `--format`, `-f` | `<str>` | table, csv, json or html. <br>_Default: `table`_ |
-| `--output`, `-o` | `<path>` | Write results to this path. |
-| `--provenance` | `<path>` | Write a provenance JSON file. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `--format`, `-f` | `str` | table, csv, json or html.<br>_Default: `table`_ |
+| `--output`, `-o` | `path` | Write results to this path. |
+| `--provenance` | `path` | Write a provenance JSON file. |
 
 ---
 
@@ -168,7 +142,7 @@ entirely.
 Report format, compression, encoding, delimiter, header and PRS fields.
 
 ```text
-Usage: gwaspoker scan [OPTIONS] target
+gwaspoker scan [OPTIONS]
 ```
 
 The offline command. Takes a local path and needs no network. Also accepts an
@@ -178,26 +152,16 @@ attached.
 `--emit-code` prints a ready-to-paste `pandas.read_csv` call with the detected
 delimiter, encoding, header row and comment character already filled in.
 
-### Arguments
-
-| Argument | Type | Description |
-| --- | --- | --- |
-| `target` | `<str>` | **required** A local file path, an http(s) URL or a GCST accession. |
-
 ### Options
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--probe-bytes` | `<int>` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
-| `--target` | `<str>` | Downstream workflow. <br>_Default: `prs`_ |
+| `target` | `str` | **required** A local file path, an http(s) URL or a GCST accession. |
+| `--probe-bytes` | `int` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
+| `--target` | `str` | Downstream workflow.<br>_Default: `prs`_ |
 | `--emit-code` |  | Print a pandas snippet that renames columns to PRS symbols. |
-| `--format`, `-f` | `<str>` | table, csv, json or html. <br>_Default: `table`_ |
-| `--output`, `-o` | `<path>` | Write results to this path. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `--format`, `-f` | `str` | table, csv, json or html.<br>_Default: `table`_ |
+| `--output`, `-o` | `path` | Write results to this path. |
 
 ---
 
@@ -206,7 +170,7 @@ delimiter, encoding, header row and comment character already filled in.
 Download the complete file, with checksum verification.
 
 ```text
-Usage: gwaspoker download [OPTIONS] target
+gwaspoker download [OPTIONS]
 ```
 
 Transfers the complete file and verifies it against the published MD5. Resumes
@@ -215,28 +179,18 @@ an interrupted transfer when the server supports ranges.
 `--no-verify` skips checksum verification; use it only when the source publishes
 no checksum.
 
-### Arguments
-
-| Argument | Type | Description |
-| --- | --- | --- |
-| `target` | `<str>` | **required** A GCST accession or an http(s) URL. |
-
 ### Options
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--output-dir`, `-d` | `<path>` | Directory to download into. |
-| `--harmonised` | `<str>` | auto (default), yes or no -- prefer the harmonised file. |
+| `target` | `str` | **required** A GCST accession or an http(s) URL. |
+| `--output-dir`, `-d` | `path` | Directory to download into. |
+| `--harmonised` | `str` | auto (default), yes or no -- prefer the harmonised file. |
 | `--overwrite` |  | Replace an existing file. |
 | `--no-verify` |  | Skip MD5 verification against the published checksum. |
 | `--gwaslab` |  | Hand the downloaded file to GWASLab afterwards. |
-| `--output`, `-o` | `<path>` | Write results to this path. |
-| `--provenance` | `<path>` | Write a provenance JSON file. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `--output`, `-o` | `path` | Write results to this path. |
+| `--provenance` | `path` | Write a provenance JSON file. |
 
 ---
 
@@ -245,7 +199,7 @@ no checksum.
 Decompress and normalize a downloaded file into a clean table.
 
 ```text
-Usage: gwaspoker extract [OPTIONS] path
+gwaspoker extract [OPTIONS]
 ```
 
 Decompresses and writes a clean table. **Only declared transformations are
@@ -256,28 +210,21 @@ values to make a parser succeed.
 them the short forms PRS tools expect (`CHR`, `BP`, `A1`, `A2`, `BETA`, `SE`,
 `P`).
 
-### Arguments
-
-| Argument | Type | Description |
-| --- | --- | --- |
-| `path` | `<path>` | **required** A downloaded summary-statistics file. |
+An archive member is unpacked into a sibling `<name>_extracted/` directory
+beside the **input** file, not beside `--output`.
 
 ### Options
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--output`, `-o` | `<path>` | Output file path. |
-| `--delimiter` | `<str>` | Output delimiter. <br>_Default: ``_ |
-| `--max-rows` | `<int>` | Read at most this many rows. |
+| `path` | `path` | **required** A downloaded summary-statistics file. |
+| `--output`, `-o` | `path` | Output file path. |
+| `--delimiter` | `str` | Output delimiter.<br>_Default: `	`_ |
+| `--max-rows` | `int` | Read at most this many rows. |
 | `--rename` |  | Rename columns to canonical concepts. |
 | `--rename-symbols` |  | Rename columns to PRS tool symbols (CHR, BP, A1, ...). |
 | `--overwrite` |  | Replace an existing output file. |
-| `--report` | `<path>` | Write the transformation report as JSON. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `--report` | `path` | Write the transformation report as JSON. |
 
 ---
 
@@ -286,7 +233,7 @@ them the short forms PRS tools expect (`CHR`, `BP`, `A1`, `A2`, `BETA`, `SE`,
 Search, assess and rank candidate studies end to end.
 
 ```text
-Usage: gwaspoker run [OPTIONS]
+gwaspoker run [OPTIONS]
 ```
 
 Search, assess and rank in one pass. Ranks candidates by readiness first, then
@@ -296,24 +243,19 @@ by sample size. Add `--download` to fetch the studies that came back `READY`.
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--trait`, `-t` | `<str>` | **required** Phenotype to search for. |
-| `--population`, `-p` | `<str>` | Ancestry filter. |
-| `--target` | `<str>` | Downstream workflow. <br>_Default: `prs`_ |
-| `--limit`, `-n` | `<int>` | Studies to assess. <br>_Default: `10`_ |
+| `--trait`, `-t` | `str` | **required** Phenotype to search for. |
+| `--population`, `-p` | `str` | Ancestry filter. |
+| `--target` | `str` | Downstream workflow.<br>_Default: `prs`_ |
+| `--limit`, `-n` | `int` | Studies to assess.<br>_Default: `10`_ |
 | `--force-probe` |  | Probe even when the API sufficed. |
 | `--download` |  | Download the top-ranked study. Files can be many gigabytes. |
 | `--gwaslab` |  | Run GWASLab on any downloaded file. |
-| `--output-dir`, `-d` | `<path>` | Download directory. |
-| `--probe-bytes` | `<int>` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
-| `--harmonised` | `<str>` | auto (default), yes or no -- prefer the harmonised file. |
-| `--format`, `-f` | `<str>` | table, csv, json or html. <br>_Default: `table`_ |
-| `--output`, `-o` | `<path>` | Write results to this path. |
-| `--provenance` | `<path>` | Write a provenance JSON file. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `--output-dir`, `-d` | `path` | Download directory. |
+| `--probe-bytes` | `int` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
+| `--harmonised` | `str` | auto (default), yes or no -- prefer the harmonised file. |
+| `--format`, `-f` | `str` | table, csv, json or html.<br>_Default: `table`_ |
+| `--output`, `-o` | `path` | Write results to this path. |
+| `--provenance` | `path` | Write a provenance JSON file. |
 
 ---
 
@@ -322,7 +264,7 @@ by sample size. Add `--download` to fetch the studies that came back `READY`.
 Score predictions against externally curated ground truth.
 
 ```text
-Usage: gwaspoker benchmark [OPTIONS] manifest_path
+gwaspoker benchmark [OPTIONS]
 ```
 
 Scores predictions against a manifest of externally curated ground truth.
@@ -334,28 +276,22 @@ Scores predictions against a manifest of externally curated ground truth.
     manifest looks like that has happened. See
     [Benchmarking](benchmarking.md).
 
-### Arguments
-
-| Argument | Type | Description |
-| --- | --- | --- |
-| `manifest_path` | `<path>` | **required** Benchmark manifest CSV. |
+    `--run` keeps predictions in memory; it does **not** write them back over
+    the manifest you gave it. Pass `--update-manifest PATH` to save them
+    somewhere.
 
 ### Options
 
 | Flag | Type | Description |
 | --- | --- | --- |
+| `manifest_path` | `path` | **required** Benchmark manifest CSV. |
 | `--run` |  | Run GWASPoker to fill the prediction columns first. |
 | `--probe-size-sweep` |  | Probe each study at 64 KB, 128 KB, 256 KB, 512 KB and 1 MB. |
-| `--stratify` | `<str>` | Comma-separated: ssf_status, api_coverage, file_format, compression, source. |
-| `--probe-bytes` | `<int>` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
-| `--harmonised` | `<str>` | auto (default), yes or no -- prefer the harmonised file. |
-| `--update-manifest` | `<path>` | Write the manifest back with predictions filled in. |
-| `--output`, `-o` | `<path>` | Write results to this path. |
-| `--failure-log` | `<path>` | Append classified failures as JSON Lines. |
-| `--config` | `<path>` | Path to a gwaspoker.toml or .yaml config file. |
-| `--verbose`, `-v` | `<int>` | -v for INFO, -vv for DEBUG. <br>_Default: `0`_ |
-| `--quiet`, `-q` |  | Only report errors. |
-| `--help` |  | Show this message and exit. |
+| `--stratify` | `str` | Comma-separated: ssf_status, api_coverage, file_format, compression, source. |
+| `--probe-bytes` | `int` | Bytes to inspect. Suggested: 65536, 131072, 262144, 524288, 1048576. |
+| `--harmonised` | `str` | auto (default), yes or no -- prefer the harmonised file. |
+| `--update-manifest` | `path` | Write the manifest back with predictions filled in. |
+| `--output`, `-o` | `path` | Write results to this path. |
 
 ---
 

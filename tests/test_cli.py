@@ -422,6 +422,20 @@ def test_tristate_distinguishes_unknown_from_false() -> None:
 
 
 def test_search_help_documents_the_check_files_flag() -> None:
+    """The flag must exist and carry help text.
+
+    Asserted against Click's parameter objects rather than the rendered help:
+    Rich truncates long option names in its output (`--no-check-fil...`) by an
+    amount that varies with the Rich version and the terminal, so the same
+    assertion against `result.stdout` passed locally and failed on CI.
+    """
+    import typer.main
+
     result = runner.invoke(app, ["search", "--help"])
     assert result.exit_code == 0
-    assert "--no-check-files" in result.stdout
+
+    search = typer.main.get_command(app).commands["search"]
+    flag = next(p for p in search.params if "--check-files" in p.opts)
+    assert "--no-check-files" in flag.secondary_opts
+    assert flag.default is True
+    assert "'?'" in (flag.help or ""), "the help must say `?` means unchecked, not absent"
