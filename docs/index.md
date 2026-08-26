@@ -17,13 +17,18 @@ from **zero data bytes**.
 <div class="metric-grid" markdown>
 
 <div class="metric" markdown>
-<strong>99.93%</strong>
-<span>of a 377.78 MB file not transferred to reach a verdict</span>
+<strong>99.94%</strong>
+<span>less data transferred across a controlled 50-file benchmark</span>
 </div>
 
 <div class="metric" markdown>
 <strong>0 bytes</strong>
 <span>of data read when a GWAS-SSF sidecar declares the schema</span>
+</div>
+
+<div class="metric" markdown>
+<strong>772/772</strong>
+<span>raw headers matching an independently observed source exactly</span>
 </div>
 
 <div class="metric" markdown>
@@ -148,6 +153,8 @@ Being explicit about scope is part of being trustworthy.
   every flag.
 - :material-sitemap: **[Architecture](architecture.md)** — how the layers fit
   together, and why.
+- :material-chart-box: **[Validation Results](validation-results.md)** — four
+  experiments over 2,208 GWAS Catalog studies and 402 external URLs.
 
 </div>
 

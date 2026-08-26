@@ -57,6 +57,7 @@ nav:
       - CLI Reference: cli-reference.md
       - Configuration: configuration.md
       - Failure Categories: failures.md
+      - Validation Results: validation-results.md
       - Benchmarking: benchmarking.md
       - Reproducibility: reproducibility.md
       - Contributing: contributing.md
