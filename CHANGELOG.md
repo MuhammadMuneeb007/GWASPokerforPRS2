@@ -114,6 +114,18 @@ labels. No behaviour that was already correct was changed.
 
 ### Documentation
 
+* **"API-aware" is now "standards-aware"** in the README, the package
+  description, the CLI help, the site and the HTML reports. The old phrasing
+  named a mechanism — and named the wrong one, since the Summary Statistics API
+  is withdrawn and the structured route is the GWAS-SSF sidecar.
+* **The README no longer claims PRS-column availability "is not recorded
+  anywhere you can query."** That was too broad: a GWAS-SSF declaration records
+  exactly that, which the same README explains a few paragraphs later. The
+  opening now states the actual scope — modern GWAS-SSF submissions can settle
+  readiness from metadata, while pre-GWAS-SSF, non-GWAS-SSF,
+  metadata-insufficient, legacy and externally distributed files may still need
+  direct inspection.
+
 * **Validation results are now reported**, in the README and on the site
   (`docs/validation-results.md`): four experiments over 2,208 GWAS Catalog
   studies and 402 external URLs — field and value agreement against GWASLab,

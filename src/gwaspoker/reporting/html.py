@@ -154,7 +154,7 @@ def render_report(
     """Render a self-contained HTML report as a string."""
     sections: list[str] = [
         f"<h1>{html.escape(title)}</h1>",
-        '<p class="sub">API-aware pre-download triage of GWAS summary statistics '
+        '<p class="sub">Standards-aware pre-download triage of GWAS summary statistics '
         "for PRS workflows.</p>",
     ]
 

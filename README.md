@@ -1,6 +1,7 @@
 # GWASPoker
 
-API-aware pre-download triage of GWAS summary statistics for PRS workflows.
+Standards-aware pre-download triage of GWAS summary statistics
+for PRS workflows.
 
 [![CI](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/ci.yml)
 [![Docs](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/pages.yml/badge.svg)](https://muhammadmuneeb007.github.io/GWASPokerforPRS2/)
@@ -13,20 +14,19 @@ API-aware pre-download triage of GWAS summary statistics for PRS workflows.
 
 ## The problem
 
-A polygenic risk score needs summary statistics with the right columns: a
-variant identifier, both alleles, an effect size and a p-value. Whether a given
-file has them is not recorded anywhere you can query. So the usual workflow is:
+Modern GWAS-SSF submissions provide structured information that can
+settle many file-level readiness questions without inspecting the data
+file. However, pre-GWAS-SSF, non-GWAS-SSF, metadata-insufficient,
+legacy and externally distributed summary statistics can still require
+direct inspection before their suitability for a PRS workflow is known.
 
-1. find candidate studies for your phenotype;
-2. download one — often 300 MB to 3 GB;
-3. decompress it;
-4. look at the header;
-5. discover it lacks the other allele, and start again.
+GWASPoker uses structured metadata first and performs bounded source-file
+inspection only when that information is insufficient.
 
-Steps 2 and 3 cost gigabytes and minutes each time, and you repeat them for
-every candidate. Scanning the GWAS Catalog reveals many files per phenotype,
-differing in population, sample size, genome build, analysis type and — the part
-that decides usability — which columns they actually contain.
+Without that, the workflow for an unstandardised file is: find candidate
+studies, download one — often 300 MB to 3 GB — decompress it, look at the
+header, discover it lacks the other allele, and start again. Steps two and
+three cost gigabytes and minutes each time, and repeat for every candidate.
 
 ## What GWASPoker does
 

@@ -43,7 +43,8 @@ logger = logging.getLogger(__name__)
 app = typer.Typer(
     name="gwaspoker",
     help=(
-        "API-aware pre-download triage of GWAS summary statistics for PRS workflows.\n\n"
+        "Standards-aware pre-download triage of GWAS summary statistics for PRS "
+        "workflows.\n\n"
         "GWASPoker uses structured GWAS Catalog information first. Remote file probing "
         "is performed only when file-level inspection is required or explicitly requested."
     ),

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gwaspoker"
 version = "2.1.0"
-description = "API-aware pre-download triage of GWAS summary statistics for PRS workflows"
+description = "Standards-aware pre-download triage of GWAS summary statistics for PRS workflows"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"

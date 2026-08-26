@@ -4,13 +4,14 @@
 
 # Know before you download
 
-**GWASPoker** decides whether a GWAS summary-statistics file is usable for a
-polygenic risk score **before** the file is transferred. It reads structured
-GWAS Catalog metadata first, and falls back to reading a bounded prefix of the
-file only when metadata cannot answer the question.
+**GWASPoker** is standards-aware pre-download triage: it decides whether a GWAS
+summary-statistics file is usable for a polygenic risk score **before** the file
+is transferred. Structured GWAS-SSF metadata comes first; a bounded prefix of
+the file is read only when that metadata cannot settle the question.
 
-A 377 MB file can be judged from 256 KB. A GWAS-SSF-declaring file can be judged
-from **zero data bytes**.
+A GWAS-SSF-declaring file can be judged from **zero data bytes**. Across a
+controlled 50-file benchmark, bounded probing avoided **99.94%** of the bytes a
+complete transfer would have moved.
 
 </div>
 
@@ -55,7 +56,9 @@ Everything in this tool exists to answer a single question:
 
 A PRS needs five things from a summary-statistics file: a variant identifier, an
 effect allele, a non-effect allele, an effect size, and a p-value. Nothing else
-is strictly required. GWASPoker's job is to find out whether those five columns
+is strictly required. Modern GWAS-SSF submissions declare enough for that
+question to be answered from metadata alone; pre-GWAS-SSF, non-GWAS-SSF,
+metadata-insufficient, legacy and externally distributed files often do not. GWASPoker's job is to find out whether those five columns
 are present, whether their values behave the way those concepts should, and to
 say so without downloading gigabytes to find out.
 

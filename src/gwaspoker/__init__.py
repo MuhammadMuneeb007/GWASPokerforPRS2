@@ -1,4 +1,4 @@
-"""GWASPoker: API-aware pre-download triage of GWAS summary statistics for PRS workflows.
+"""GWASPoker: standards-aware pre-download triage of GWAS summary statistics for PRS.
 
 GWASPoker answers one question cheaply, before a multi-gigabyte transfer is
 committed to: *is this summary-statistics file usable for a polygenic risk
