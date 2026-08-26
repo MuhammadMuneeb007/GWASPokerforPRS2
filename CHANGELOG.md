@@ -126,10 +126,12 @@ labels. No behaviour that was already correct was changed.
   flag appears on the published page, every nav entry resolves, every page is
   reachable, every internal link resolves, and every failure category and
   configuration setting named in prose is real.
-* `docs/ARCHITECTURE.md`, `MAPPING_SCHEMA.md`, `API_SOURCES.md` and
-  `MIGRATION_NOTES.md` were renamed to lower-case site paths
-  (`architecture.md`, `mapping.md`, `data-sources.md`, `migration.md`); all
-  references were updated.
+* `docs/ARCHITECTURE.md`, `MAPPING_SCHEMA.md` and `API_SOURCES.md` were renamed
+  to lower-case site paths (`architecture.md`, `mapping.md`,
+  `data-sources.md`); all references were updated.
+* `docs/MIGRATION_NOTES.md` was removed. It audited what changed between v1 and
+  v2 — development history rather than user documentation, and not something a
+  reader of a released tool needs. It remains in the git history.
 
 ### Housekeeping
 

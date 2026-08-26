@@ -788,7 +788,6 @@ Full documentation site: **<https://muhammadmuneeb007.github.io/GWASPokerforPRS2
 | [`docs/architecture.md`](docs/architecture.md) | Layers, module responsibilities, design decisions |
 | [`docs/data-sources.md`](docs/data-sources.md) | Every upstream interface, verified behaviour, fallbacks |
 | [`docs/mapping.md`](docs/mapping.md) | Canonical vocabulary and the exact PRS-readiness rules |
-| [`docs/migration.md`](docs/migration.md) | Audit of v1: what was kept, what was wrong, what changed |
 | [`docs/failures.md`](docs/failures.md) | What every failure category means |
 | [`docs/configuration.md`](docs/configuration.md) | Every setting, and its precedence |
 | [`docs/reproducibility.md`](docs/reproducibility.md) | What provenance records, and what to report |

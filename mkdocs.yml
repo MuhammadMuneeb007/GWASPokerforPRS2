@@ -59,7 +59,6 @@ nav:
       - Failure Categories: failures.md
       - Benchmarking: benchmarking.md
       - Reproducibility: reproducibility.md
-      - Migration from v1: migration.md
       - Contributing: contributing.md
       - Changelog: changelog.md
 
