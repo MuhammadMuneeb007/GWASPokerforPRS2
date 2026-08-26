@@ -57,9 +57,9 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/muneebsiddique/gwaspoker"
-Documentation = "https://github.com/muneebsiddique/gwaspoker/tree/main/docs"
-Issues = "https://github.com/muneebsiddique/gwaspoker/issues"
+Homepage = "https://github.com/MuhammadMuneeb007/GWASPokerforPRS2"
+Documentation = "https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/tree/main/docs"
+Issues = "https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/issues"
 
 [project.scripts]
 gwaspoker = "gwaspoker.cli:main"

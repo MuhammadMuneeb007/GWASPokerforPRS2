@@ -18,6 +18,7 @@ not against the benchmark, so they stay meaningful after the cohort is rerun.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 
 import pytest
@@ -692,3 +693,201 @@ def test_a_terminal_status_still_records_where_it_landed(config) -> None:
     assert result.transfer.redirect_count == 1
     assert result.transfer.content_type == "text/html"
     assert [a["method"] for a in result.transfer.attempts] == ["HEAD"]
+
+
+# ======================================================================
+# Plain text under a .gz name is read, not refused
+# ======================================================================
+
+
+def test_mislabelled_gz_is_parsed_rather_than_refused(fixtures_dir) -> None:
+    """A `.gz` holding ordinary TSV is a naming error, not a broken file.
+
+    Classifying it as CONTENT_MISMATCH was correct but insufficient: the probe
+    then stopped, so data GWASPoker can read was discarded over a wrong
+    extension.
+    """
+    result = RemoteProber().probe_local(fixtures_dir / "plaintext_named_gz.tsv.gz")
+
+    assert result.succeeded, result.error
+    assert result.payload.kind is PayloadKind.CONTENT_MISMATCH
+    assert result.payload.is_recoverable_mismatch
+    assert result.compression is Compression.NONE
+    assert {"p_value", "beta", "standard_error"} <= set(result.mapping.concepts())
+
+
+def test_the_mismatch_is_reported_as_a_warning(fixtures_dir) -> None:
+    """Recovering from it must not hide it: provenance still records the fact."""
+    result = RemoteProber().probe_local(fixtures_dir / "plaintext_named_gz.tsv.gz")
+
+    assert any("named as gzip" in w for w in result.warnings)
+    assert result.to_dict()["warnings"]
+    assert result.to_dict()["payload"]["is_textual"] is True
+    # A warning explains a result; it never becomes one.
+    assert result.failure_category is None
+
+
+def test_binary_under_a_gz_name_is_still_a_failure(tmp_path) -> None:
+    """Nothing to parse means nothing to recover."""
+    import os
+
+    path = tmp_path / "study.tsv.gz"
+    path.write_bytes(b"\x00\x01\x02\x03" + os.urandom(4000))
+
+    result = RemoteProber().probe_local(path)
+    assert not result.succeeded
+    assert result.failure_category is FailureCategory.CONTENT_MISMATCH
+    assert not result.payload.is_recoverable_mismatch
+
+
+@pytest.mark.parametrize(
+    ("data", "textual"),
+    [
+        (b"CHR\tBP\tP\n1\t2\t0.5\n", True),
+        (b"", False),
+        (b"\x00\x01\x02\x03" * 100, False),
+        ("CHR\tBP\n1\t2\n".encode("utf-16"), True),  # BOM contains NULs
+        (b"caf\xc3\xa9 \xe2\x80\x94 notes\n" * 50, True),
+        (bytes(range(32)) * 100, False),
+    ],
+)
+def test_textual_detection(data, textual) -> None:
+    from gwaspoker.probe.payload import looks_textual
+
+    assert looks_textual(data) is textual
+
+
+# ======================================================================
+# Transfer accounting survives a stream that dies part-way
+# ======================================================================
+
+
+class _DyingResponse:
+    """A streaming response that delivers real bytes, then drops the connection.
+
+    `responses` cannot model this: it either returns a body or raises instead
+    of returning one, never both. The interesting case is exactly in between.
+    """
+
+    status_code = 206
+    headers = {"Content-Type": "application/gzip; charset=binary"}
+    url = "https://cdn.example.org/study.tsv.gz"
+    history = (object(),)
+
+    def __init__(self, chunks: int = 3) -> None:
+        self.chunks = chunks
+        self.closed = False
+
+    def iter_content(self, chunk_size=None):
+        from requests.exceptions import ConnectionError as RequestsConnectionError
+
+        for _ in range(self.chunks):
+            yield b"x" * 32_768
+        raise RequestsConnectionError("connection reset by peer")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _HeadOk:
+    """A HEAD that advertises range support and nothing else."""
+
+    status_code = 200
+    headers = {"Accept-Ranges": "bytes"}
+    url = URL
+    history = ()
+    ok = True
+
+    def close(self) -> None:
+        pass
+
+
+def test_bytes_received_before_a_mid_stream_failure_are_counted(config) -> None:
+    """96 KiB that arrived before a reset still crossed the network.
+
+    `TransferStats` claims to be "exactly what moved over the network", and
+    transfer reduction is the headline result, so an abandoned partial read
+    must not be booked as zero. It used to be: the streaming loop and the
+    request lived in one `try`, so the buffer was discarded with the exception.
+    """
+    from gwaspoker.failures import PartialTransferError
+
+    client = HttpClient(config)
+    dying = _DyingResponse()
+    # `_session` is a thread-local property, so patch the session it hands back
+    # rather than the attribute.
+    client._session.get = lambda *_a, **_k: dying  # noqa: SLF001
+
+    with pytest.raises(PartialTransferError) as caught:
+        client.get_range(URL, start=0, length=1_000_000)
+
+    exc = caught.value
+    assert exc.bytes_received == 98_304
+    assert exc.elapsed_seconds > 0
+    assert exc.status == 206
+    assert exc.final_url == "https://cdn.example.org/study.tsv.gz"
+    assert exc.redirect_count == 1
+    assert dying.closed, "the connection must be released even on the failure path"
+
+
+def test_the_prober_books_those_bytes_against_the_transfer(config) -> None:
+    """End to end: the partial read reaches TransferStats, not a zero."""
+    from gwaspoker.probe.remote import TransferStats
+
+    client = HttpClient(config)
+    session = client._session  # noqa: SLF001
+    session.head = lambda *_a, **_k: _HeadOk()
+    session.get = lambda *_a, **_k: _DyingResponse()
+
+    stats = TransferStats()
+    prober = RemoteProber(config, client)
+    # Both GETs die by design; the accounting they leave behind is under test.
+    with contextlib.suppress(Exception):
+        prober._fetch_prefix(URL, 1_000_000, stats)  # noqa: SLF001
+
+    assert stats.received_bytes >= 98_304
+    assert any(a["bytes"] == 98_304 for a in stats.attempts)
+
+
+def test_partial_transfer_error_is_recorded_with_its_real_cost(config) -> None:
+    """The prober books the failed attempt's bytes and seconds, not zeros."""
+    from gwaspoker.failures import FailureCategory as FC
+    from gwaspoker.failures import PartialTransferError
+    from gwaspoker.probe.remote import TransferStats
+
+    stats = TransferStats()
+    RemoteProber._record_failed_attempt(
+        stats,
+        "GET_RANGE",
+        PartialTransferError(
+            "Range GET died",
+            category=FC.NETWORK_ERROR,
+            bytes_received=98_304,
+            elapsed_seconds=4.25,
+            status=200,
+            final_url="https://cdn.example.org/study.tsv.gz",
+            redirect_count=1,
+            content_type="application/gzip; charset=binary",
+        ),
+    )
+
+    assert stats.received_bytes == 98_304
+    attempt = stats.attempts[-1]
+    assert attempt["bytes"] == 98_304
+    assert attempt["seconds"] == 4.25
+    assert attempt["status"] == 200
+    assert stats.final_url == "https://cdn.example.org/study.tsv.gz"
+    assert stats.redirect_count == 1
+    assert stats.content_type == "application/gzip"
+
+
+def test_a_plain_remote_access_error_still_records_zero(config) -> None:
+    """Only a *partial* transfer has bytes to claim."""
+    from gwaspoker.failures import RemoteAccessError
+    from gwaspoker.probe.remote import TransferStats
+
+    stats = TransferStats()
+    RemoteProber._record_failed_attempt(stats, "HEAD", RemoteAccessError("DNS failure"))
+
+    assert stats.received_bytes == 0
+    assert stats.attempts[-1]["bytes"] == 0

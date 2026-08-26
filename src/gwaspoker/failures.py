@@ -117,6 +117,39 @@ class RemoteAccessError(GWASPokerError):
     category = FailureCategory.NETWORK_ERROR
 
 
+class PartialTransferError(RemoteAccessError):
+    """A bounded transfer failed *after* some bytes had already arrived.
+
+    Those bytes crossed the network and were paid for. Raising a plain
+    :class:`RemoteAccessError` discarded the count, so a probe that received
+    96 KiB and then timed out was recorded as having transferred nothing --
+    which quietly overstates the transfer reduction GWASPoker reports.
+
+    The attributes carry what the failed attempt actually cost, so the caller
+    can record it instead of assuming zero.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        category: Optional[FailureCategory] = None,
+        bytes_received: int = 0,
+        elapsed_seconds: float = 0.0,
+        status: Optional[int] = None,
+        final_url: Optional[str] = None,
+        redirect_count: int = 0,
+        content_type: Optional[str] = None,
+    ) -> None:
+        super().__init__(message, category=category)
+        self.bytes_received = bytes_received
+        self.elapsed_seconds = elapsed_seconds
+        self.status = status
+        self.final_url = final_url
+        self.redirect_count = redirect_count
+        self.content_type = content_type
+
+
 class FileResolutionError(GWASPokerError):
     """No summary-statistics file could be resolved for a study."""
 

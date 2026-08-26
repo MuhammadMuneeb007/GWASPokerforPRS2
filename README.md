@@ -2,6 +2,7 @@
 
 API-aware pre-download triage of GWAS summary statistics for PRS workflows.
 
+[![CI](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -104,8 +105,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module layout and
 ## Installation
 
 ```bash
-git clone https://github.com/muneebsiddique/gwaspoker.git
-cd gwaspoker
+git clone https://github.com/MuhammadMuneeb007/GWASPokerforPRS2.git
+cd GWASPokerforPRS2
 pip install -e .
 ```
 

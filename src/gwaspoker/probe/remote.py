@@ -155,6 +155,10 @@ class ProbeResult:
     value_validation: Optional[ValueValidationResult] = None
     error: Optional[str] = None
     failure_category: Optional[FailureCategory] = None
+    #: Non-fatal observations worth carrying into a report: a mislabelled
+    #: extension, an archive member reached past metadata, and so on. A warning
+    #: never suppresses a result -- it explains one.
+    warnings: list[str] = field(default_factory=list)
     probe_seconds: float = 0.0
 
     @property
@@ -212,6 +216,7 @@ class ProbeResult:
             ),
             "succeeded": self.succeeded,
             "error": self.error,
+            "warnings": list(self.warnings),
             "failure_category": self.failure_category.value if self.failure_category else None,
             "probe_seconds": round(self.probe_seconds, 4),
         }
@@ -312,6 +317,33 @@ class RemoteProber:
     #: falling back on these would waste a request and misreport the outcome.
     _TERMINAL_STATUSES = (403, 404, 410)
 
+    @staticmethod
+    def _record_failed_attempt(stats: TransferStats, method: str, exc: Exception) -> None:
+        """Record what a failed attempt cost, not merely that it failed.
+
+        A stream that delivered 96 KiB and then timed out moved 96 KiB. Booking
+        it as zero would overstate the transfer reduction GWASPoker reports,
+        which is a headline number -- so :class:`PartialTransferError` carries
+        the real figures and they are recorded here.
+        """
+        from gwaspoker.failures import PartialTransferError
+
+        if isinstance(exc, PartialTransferError):
+            stats.record_attempt(
+                method,
+                status=exc.status,
+                bytes_received=exc.bytes_received,
+                seconds=exc.elapsed_seconds,
+                error=str(exc),
+            )
+            if exc.final_url and stats.final_url is None:
+                stats.final_url = exc.final_url
+                stats.redirect_count = exc.redirect_count
+            if exc.content_type and not stats.content_type:
+                stats.content_type = exc.content_type.split(";", 1)[0].strip().lower()
+        else:
+            stats.record_attempt(method, error=str(exc))
+
     def _absorb(self, stats: TransferStats, result, method: str) -> None:
         """Fold one successful response's metadata into the transfer stats."""
         stats.record_attempt(
@@ -385,7 +417,7 @@ class RemoteProber:
             ):
                 raise
             # HEAD is a convenience, not a requirement: carry on without it.
-            stats.record_attempt("HEAD", error=str(exc))
+            self._record_failed_attempt(stats, "HEAD", exc)
             logger.debug("HEAD failed for %s (%s); continuing with GET", url, exc)
 
         stats.range_supported = range_supported
@@ -395,7 +427,7 @@ class RemoteProber:
             try:
                 result = self.http.get_range(url, start=0, length=limit)
             except RemoteAccessError as exc:
-                stats.record_attempt("GET_RANGE", error=str(exc))
+                self._record_failed_attempt(stats, "GET_RANGE", exc)
                 logger.debug("Range GET failed for %s (%s); trying a bounded GET", url, exc)
             else:
                 if result.status_code in self._TERMINAL_STATUSES:
@@ -426,7 +458,7 @@ class RemoteProber:
         try:
             result = self.http.stream_bounded(url, limit=limit)
         except RemoteAccessError as exc:
-            stats.record_attempt("GET_BOUNDED", error=str(exc))
+            self._record_failed_attempt(stats, "GET_BOUNDED", exc)
             raise
         self._absorb(stats, result, "GET_BOUNDED")
         stats.range_supported = False
@@ -459,11 +491,29 @@ class RemoteProber:
             return
 
         if result.payload.kind is PayloadKind.CONTENT_MISMATCH:
-            result.error = _non_data_message(result)
-            result.failure_category = FailureCategory.CONTENT_MISMATCH
-            return
+            # Two very different situations share this classification.
+            #
+            # `study.txt.gz` that is not gzip but *is* ordinary TSV is a naming
+            # error on the server, over data that reads perfectly well. Refusing
+            # it would discard files GWASPoker can parse -- so the mismatch is
+            # recorded as a warning, compression is set to NONE, and the
+            # pipeline continues. The same URL holding an unrecognised binary
+            # format has nothing to parse and remains a failure.
+            if not result.payload.is_recoverable_mismatch:
+                result.error = _non_data_message(result)
+                result.failure_category = FailureCategory.CONTENT_MISMATCH
+                return
 
-        result.compression = detect_compression(data, result.filename)
+            declared = result.payload.declared_compression or "compression"
+            result.warnings.append(
+                f"{result.filename} is named as {declared} but carries no {declared} "
+                "signature; the bytes read as text and were parsed uncompressed. The "
+                "extension is wrong, not the file."
+            )
+            logger.info("Content mismatch on %s; reading as plain text", result.source)
+            result.compression = Compression.NONE
+        else:
+            result.compression = detect_compression(data, result.filename)
 
         try:
             decompressed = decompress_prefix(data, result.compression)

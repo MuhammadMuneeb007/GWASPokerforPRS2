@@ -27,8 +27,17 @@ labels. No behaviour that was already correct was changed.
   mislabel `.gz` routinely.
 * **Two new failure categories**: `non_data_response` (the server returned a
   page, not the file) and `content_mismatch` (the extension disagrees with the
-  bytes). Neither is reported as `decompression_error` any more, and a `.gz`
-  that is really plain text is now read as plain text.
+  bytes). Neither is reported as `decompression_error` any more.
+* **A content mismatch is not automatically fatal.** `study.txt.gz` that holds
+  ordinary TSV is a naming error on the server, over data GWASPoker can read.
+  When the bytes are convincingly textual the mismatch is downgraded to a
+  warning, compression is set to `NONE`, and encoding, header detection and
+  mapping proceed as normal; the warning still reaches the console and
+  provenance (`warnings`, `payload.is_textual`). A `.gz` holding unrecognised
+  *binary* has nothing to parse and remains a failure. Textuality is decided by
+  the conventional NUL/control-byte test, with an explicit exception for
+  UTF-16/32 byte-order marks; whether the text is *tabular* is left to header
+  detection and the data-table guard, so the two cannot disagree.
 * **Archives are walked, not sampled.** Both the tar and zip prefix parsers
   follow the member chain and skip directory records, PAX/GNU headers,
   `__MACOSX/` forks, READMEs and PDFs. Zip is handled from local file headers
@@ -50,6 +59,14 @@ labels. No behaviour that was already correct was changed.
   HEAD → Range GET → bounded GET.
 * **Every attempt is recorded** with method, status, bytes and duration, and
   bytes are accumulated across all of them rather than only the last.
+* **Bytes received before a mid-stream failure are counted.** The request and
+  the streaming read shared one `try`, so a probe that received 96 KiB and then
+  hit a connection reset was booked as having transferred nothing — which
+  overstates the transfer reduction GWASPoker reports, and that figure is a
+  headline result. `PartialTransferError` now carries the real byte count,
+  elapsed time, status, final URL and content-type from the failed attempt, and
+  the prober records them. The read buffer is owned by the caller rather than by
+  the read helper, so it survives the exception.
 * **Response metadata is captured whatever the status**, including the failure
   path: final URL after redirects, redirect count, content-type and
   content-disposition. A 404 reached after two redirects is explained by the
@@ -83,7 +100,13 @@ labels. No behaviour that was already correct was changed.
 
 * The User-Agent is derived from `__version__` instead of being repeated as a
   literal, so it cannot misattribute a benchmark run.
-* 78 new tests (`tests/test_robustness.py`), organised by the diagnosis each
+* Project URLs corrected to `MuhammadMuneeb007/GWASPokerforPRS2`; they pointed
+  at a repository that does not exist.
+* GitHub Actions CI added (`.github/workflows/ci.yml`): ruff, black and the unit
+  suite on Python 3.9 and 3.13, Linux and Windows, so test status is visible
+  from the repository. The live integration suite is `workflow_dispatch` only —
+  running it on every push would put avoidable load on ftp.ebi.ac.uk.
+* 91 new tests (`tests/test_robustness.py`), organised by the diagnosis each
   one rules out; 5 new fixtures — an HTML landing page, an S3 XML error
   document, a tar and a zip whose data sits behind metadata members, and plain
   text served under a `.gz` name.

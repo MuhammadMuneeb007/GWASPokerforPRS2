@@ -237,6 +237,11 @@ def render_probe(probe: ProbeResult, *, resolved: Any = None, study: Any = None)
         )
     console.print(table)
 
+    # A warning explains a result rather than replacing one, so it is printed
+    # whether or not the probe went on to succeed.
+    for warning in probe.warnings:
+        console.print(f"[yellow]Warning:[/yellow] {warning}")
+
     if not probe.succeeded:
         console.print()
         console.print(

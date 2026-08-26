@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 #: Read from the package rather than repeated as a literal: a stale version in
 #: the User-Agent misattributes every request in a benchmark run.
-_USER_AGENT = f"gwaspoker/{__version__} (+https://github.com/muneebsiddique/gwaspoker)"
+_USER_AGENT = f"gwaspoker/{__version__} (+https://github.com/MuhammadMuneeb007/GWASPokerforPRS2)"
 
 #: Probe sizes offered by the CLI and by the benchmark's probe-size experiment.
 PROBE_SIZE_LADDER: tuple[int, ...] = (65_536, 131_072, 262_144, 524_288, 1_048_576)

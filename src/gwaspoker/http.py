@@ -19,7 +19,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from gwaspoker.config import GWASPokerConfig, get_config
-from gwaspoker.failures import RemoteAccessError, http_status_category
+from gwaspoker.failures import (
+    PartialTransferError,
+    RemoteAccessError,
+    http_status_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +107,49 @@ class HttpResult:
     @property
     def byte_count(self) -> int:
         return len(self.content)
+
+
+def _read_bounded(response, limit: int, buffer: bytearray) -> bytearray:
+    """Read at most ``limit`` bytes from a streaming response into ``buffer``.
+
+    The buffer belongs to the *caller* rather than to this function. If the
+    stream dies part-way, whatever arrived is already in the caller's hands and
+    can be counted; a buffer local to this function would be unwound with the
+    exception, which is the accounting bug this signature exists to prevent.
+    """
+    for chunk in response.iter_content(chunk_size=32_768):
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        if len(buffer) >= limit:
+            break
+    return buffer
+
+
+def _partial_transfer(
+    what: str,
+    url: str,
+    exc: Exception,
+    *,
+    response,
+    buffer: bytearray,
+    started: float,
+) -> PartialTransferError:
+    """Build the error for a stream that failed part-way through.
+
+    Everything already received is attached rather than discarded: those bytes
+    crossed the network whether or not the request finished.
+    """
+    return PartialTransferError(
+        f"{what} {url} failed after {len(buffer)} byte(s): {exc}",
+        category=_category_for(exc),
+        bytes_received=len(buffer),
+        elapsed_seconds=time.perf_counter() - started,
+        status=getattr(response, "status_code", None),
+        final_url=getattr(response, "url", None),
+        redirect_count=len(getattr(response, "history", ()) or ()),
+        content_type=(getattr(response, "headers", {}) or {}).get("Content-Type"),
+    )
 
 
 class HttpClient:
@@ -266,14 +313,21 @@ class HttpClient:
                 timeout=self.timeout,
                 stream=True,
             )
+        except requests.exceptions.RequestException as exc:
+            # No response at all: nothing was transferred, but the attempt still
+            # took time, and that time belongs in the accounting.
+            raise PartialTransferError(
+                f"Range GET {url} failed: {exc}",
+                category=_category_for(exc),
+                elapsed_seconds=time.perf_counter() - started,
+            ) from exc
+
+        # The body is read in its own guard. A stream that dies part-way has
+        # still delivered whatever arrived before it died.
+        buffer = bytearray()
+        try:
             # Read at most `length` bytes even if the server ignored the Range.
-            buffer = bytearray()
-            for chunk in response.iter_content(chunk_size=32_768):
-                if not chunk:
-                    break
-                buffer.extend(chunk)
-                if len(buffer) >= length:
-                    break
+            _read_bounded(response, length, buffer)
             content = bytes(buffer[:length])
             status = response.status_code
             headers = dict(response.headers)
@@ -282,11 +336,12 @@ class HttpClient:
             # bytes actually came from.
             final_url = response.url
             redirects = len(response.history)
-            response.close()
         except requests.exceptions.RequestException as exc:
-            raise RemoteAccessError(
-                f"Range GET {url} failed: {exc}", category=_category_for(exc)
+            raise _partial_transfer(
+                "Range GET", url, exc, response=response, buffer=buffer, started=started
             ) from exc
+        finally:
+            response.close()
         elapsed = time.perf_counter() - started
         logger.debug(
             "GET %s bytes=%d-%d -> %s, %d bytes (%.3fs)",
@@ -319,23 +374,27 @@ class HttpClient:
         started = time.perf_counter()
         try:
             response = self._session.get(url, timeout=self.timeout, stream=True)
-            buffer = bytearray()
-            for chunk in response.iter_content(chunk_size=32_768):
-                if not chunk:
-                    break
-                buffer.extend(chunk)
-                if len(buffer) >= limit:
-                    break
+        except requests.exceptions.RequestException as exc:
+            raise PartialTransferError(
+                f"Bounded GET {url} failed: {exc}",
+                category=_category_for(exc),
+                elapsed_seconds=time.perf_counter() - started,
+            ) from exc
+
+        buffer = bytearray()
+        try:
+            _read_bounded(response, limit, buffer)
             content = bytes(buffer[:limit])
             status = response.status_code
             headers = dict(response.headers)
             final_url = response.url
             redirects = len(response.history)
-            response.close()
         except requests.exceptions.RequestException as exc:
-            raise RemoteAccessError(
-                f"Bounded GET {url} failed: {exc}", category=_category_for(exc)
+            raise _partial_transfer(
+                "Bounded GET", url, exc, response=response, buffer=buffer, started=started
             ) from exc
+        finally:
+            response.close()
         elapsed = time.perf_counter() - started
         return HttpResult(
             url=final_url,

@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the ceiling of the supported range, on both platforms
+        # GWASPoker claims to run on. The middle versions rarely fail alone.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.9", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: python -m ruff check src tests
+
+      - name: Format
+        run: python -m black --check src tests
+
+      - name: Test
+        # Unit tests only. The integration suite hits ftp.ebi.ac.uk live, so
+        # running it on every push would put load on someone else's server and
+        # make CI fail for reasons unrelated to the commit.
+        run: python -m pytest -q
+
+  integration:
+    name: Live integration (scheduled)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Test against the live GWAS Catalog
+        run: python -m pytest -q -m integration
