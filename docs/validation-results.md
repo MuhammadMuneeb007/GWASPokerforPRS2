@@ -132,10 +132,11 @@ collection), 7 network timeouts, 3 outer task timeouts, 2 unsupported formats,
 
 ## Reproducing this
 
-The analysis scripts and their outputs are **not yet in this repository**; see
-[`Results/README.md`](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/blob/main/Results/README.md) for what belongs there. The benchmark
-infrastructure that produced Dataset 3 is in [`benchmark/`](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/tree/main/benchmark) and is
-documented in [Benchmarking](benchmarking.md).
+The benchmark infrastructure that produced Dataset 3 is in
+[`benchmark/`](https://github.com/MuhammadMuneeb007/GWASPokerforPRS2/tree/main/benchmark),
+documented under [Benchmarking](benchmarking.md). Full methods, per-phenotype
+composition, field-level tables and failure taxonomies are in Supplementary
+Material 1.
 
 ## Next
 

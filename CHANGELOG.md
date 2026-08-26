@@ -121,9 +121,6 @@ labels. No behaviour that was already correct was changed.
   heterogeneous direct-URL probing. Each is labelled with the version that
   produced it (**2.0.0**), because 2.1.0 changed the paths the external
   experiment measures.
-* `Results/` added with a manifest of the analysis outputs the manuscript's Data
-  Availability statement promises. **The output files themselves are not yet
-  committed.**
 
 * **A documentation site**, built with MkDocs Material and deployed to GitHub
   Pages from `main`: <https://muhammadmuneeb007.github.io/GWASPokerforPRS2/>.
